@@ -3,10 +3,8 @@ package controller
 import (
 	"net/http"
 	"sort"
-
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
-
 	"github.com/gin-gonic/gin"
 )
 
@@ -103,7 +101,6 @@ func GetModelBillingListByVendor(c *gin.Context) {
 	}
 
 	// 3. 构建返回计费项
-	ratioMap := ratio_setting.GetModelRatioCopy()
 	priceMap := ratio_setting.GetModelPriceCopy()
 
 	items := make([]modelBillingItem, 0, len(models))
