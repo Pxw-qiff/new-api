@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"sort"
 
+	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 
 	"github.com/gin-gonic/gin"
