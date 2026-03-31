@@ -29,27 +29,25 @@ type modelBillingItem struct {
 	BillingType string `json:"billing_type"`
 }
 
-// GetModelBillingList 返回所有模型及其计费方式（按量/按次）
+// GetModelBillingList 返回所有开启了渠道的模型及其计费方式（按量/按次）
 func GetModelBillingList(c *gin.Context) {
-	ratioMap := ratio_setting.GetModelRatioCopy()
+	enabledModels := model.GetEnabledModels()
 	priceMap := ratio_setting.GetModelPriceCopy()
 
-	items := make([]modelBillingItem, 0, len(ratioMap)+len(priceMap))
+	items := make([]modelBillingItem, 0, len(enabledModels))
 
-	// 按量计费模型
-	for name := range ratioMap {
-		items = append(items, modelBillingItem{
-			ID:          name,
-			BillingType: "per-token",
-		})
-	}
-
-	// 按次计费模型
-	for name := range priceMap {
-		items = append(items, modelBillingItem{
-			ID:          name,
-			BillingType: "per-request",
-		})
+	for _, name := range enabledModels {
+		if _, ok := priceMap[name]; ok {
+			items = append(items, modelBillingItem{
+				ID:          name,
+				BillingType: "per-request",
+			})
+		} else {
+			items = append(items, modelBillingItem{
+				ID:          name,
+				BillingType: "per-token",
+			})
+		}
 	}
 
 	sort.Slice(items, func(i, j int) bool {
@@ -90,14 +88,28 @@ func GetModelBillingListByVendor(c *gin.Context) {
 		return
 	}
 
-	// 2. 获取该供应商下所有开启的模型
-	var models []string
-	if err := model.DB.Table("models").Select("model_name").Where("vendor_id = ? AND status = 1", vendorID).Scan(&models).Error; err != nil {
+	// 2. 获取该供应商下建立的所有模型（不限制模型广场里的 status=1，因为即使隐藏，只要添加了渠道就能用）
+	var vendorModels []string
+	if err := model.DB.Table("models").Select("model_name").Where("vendor_id = ?", vendorID).Scan(&vendorModels).Error; err != nil {
 		c.JSON(http.StatusOK, gin.H{
 			"success": false,
 			"message": "查询模型报错",
 		})
 		return
+	}
+
+	// 过滤：必须是系统中实际可用的模型
+	enabledModels := model.GetEnabledModels()
+	enabledMap := make(map[string]bool)
+	for _, em := range enabledModels {
+		enabledMap[em] = true
+	}
+
+	var models []string
+	for _, vm := range vendorModels {
+		if enabledMap[vm] {
+			models = append(models, vm)
+		}
 	}
 
 	// 3. 构建返回计费项
@@ -106,20 +118,17 @@ func GetModelBillingListByVendor(c *gin.Context) {
 	items := make([]modelBillingItem, 0, len(models))
 
 	for _, name := range models {
-		// 先查是否带有计费价格（按次计费）
 		if _, ok := priceMap[name]; ok {
 			items = append(items, modelBillingItem{
 				ID:          name,
 				BillingType: "per-request",
 			})
-			continue
+		} else {
+			items = append(items, modelBillingItem{
+				ID:          name,
+				BillingType: "per-token",
+			})
 		}
-
-		// 按量计费 (只要不在价格表里，就认为是按量/默认按量)
-		items = append(items, modelBillingItem{
-			ID:          name,
-			BillingType: "per-token",
-		})
 	}
 
 	sort.Slice(items, func(i, j int) bool {
