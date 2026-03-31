@@ -121,6 +121,7 @@ const EditModelModal = (props) => {
     vendor: '',
     vendor_icon: '',
     endpoints: '',
+    media_type: '',
     name_rule: props.editingModel?.model_name ? 0 : undefined, // 通过未配置模型过来的固定为精确匹配
     status: true,
     sync_official: true,
@@ -443,6 +444,25 @@ const EditModelModal = (props) => {
                           );
                         }
                       }}
+                      style={{ width: '100%' }}
+                    />
+                  </Col>
+                  <Col span={24}>
+                    <Form.Select
+                      field='media_type'
+                      label={t('模型类型')}
+                      placeholder={t('自动判断（留空）')}
+                      optionList={[
+                        { label: t('文本'), value: 'text' },
+                        { label: t('图片'), value: 'image' },
+                        { label: t('视频'), value: 'video' },
+                        { label: t('音频'), value: 'audio' },
+                        { label: t('向量'), value: 'embedding' },
+                      ]}
+                      showClear
+                      extraText={t(
+                        '手动指定模型类型，留空则由系统自动判断',
+                      )}
                       style={{ width: '100%' }}
                     />
                   </Col>
