@@ -48,6 +48,10 @@ func StreamScannerHandler(c *gin.Context, resp *http.Response, info *relaycommon
 	}()
 
 	streamingTimeout := time.Duration(constant.StreamingTimeout) * time.Second
+	var downstreamDone <-chan struct{}
+	if c != nil && c.Request != nil {
+		downstreamDone = c.Request.Context().Done()
+	}
 
 	var (
 		stopChan   = make(chan bool, 3) // 增加缓冲区避免阻塞
@@ -165,7 +169,7 @@ func StreamScannerHandler(c *gin.Context, resp *http.Response, info *relaycommon
 					return
 				case <-stopChan:
 					return
-				case <-c.Request.Context().Done():
+				case <-downstreamDone:
 					// 监听客户端断开连接
 					return
 				case <-pingTimeout.C:
@@ -219,8 +223,6 @@ func StreamScannerHandler(c *gin.Context, resp *http.Response, info *relaycommon
 				return
 			case <-ctx.Done():
 				return
-			case <-c.Request.Context().Done():
-				return
 			default:
 			}
 
@@ -268,16 +270,22 @@ func StreamScannerHandler(c *gin.Context, resp *http.Response, info *relaycommon
 		}
 	})
 
-	// 主循环等待完成或超时
-	select {
-	case <-ticker.C:
-		// 超时处理逻辑
-		logger.LogError(c, "streaming timeout")
-	case <-stopChan:
-		// 正常结束
-		logger.LogInfo(c, "streaming finished")
-	case <-c.Request.Context().Done():
-		// 客户端断开连接
-		logger.LogInfo(c, "client disconnected")
+	// 主循环等待完成或超时。下游断开后继续读取上游，以便拿到最终 usage 结算。
+	mainDownstreamDone := downstreamDone
+	for {
+		select {
+		case <-ticker.C:
+			// 超时处理逻辑
+			logger.LogError(c, "streaming timeout")
+			return
+		case <-stopChan:
+			// 正常结束
+			logger.LogInfo(c, "streaming finished")
+			return
+		case <-mainDownstreamDone:
+			// 客户端断开后，不再向下游写数据，但继续读取上游直至结束或超时。
+			logger.LogInfo(c, "client disconnected")
+			mainDownstreamDone = nil
+		}
 	}
 }

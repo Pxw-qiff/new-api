@@ -1,6 +1,7 @@
 package helper
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"net/http"
@@ -231,6 +232,27 @@ func TestStreamScannerHandler_DataWithExtraSpaces(t *testing.T) {
 	})
 
 	assert.Equal(t, "{\"trimmed\":true}", got)
+}
+
+func TestStreamScannerHandler_ContinuesAfterClientDisconnect(t *testing.T) {
+	t.Parallel()
+
+	const numChunks = 20
+	body := buildSSEBody(numChunks)
+	c, resp, info := setupStreamTest(t, strings.NewReader(body))
+
+	reqCtx, cancel := context.WithCancel(c.Request.Context())
+	cancel()
+	c.Request = c.Request.WithContext(reqCtx)
+
+	var count atomic.Int64
+	StreamScannerHandler(c, resp, info, func(data string) bool {
+		count.Add(1)
+		return StringData(c, data) == nil
+	})
+
+	assert.Equal(t, int64(numChunks), count.Load(), "stream parsing should continue after downstream disconnect")
+	assert.Equal(t, numChunks, info.ReceivedResponseCount)
 }
 
 // ---------- Decoupling: scanner not blocked by slow handler ----------

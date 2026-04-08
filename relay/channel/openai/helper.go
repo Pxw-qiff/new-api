@@ -69,6 +69,10 @@ func handleGeminiFormat(c *gin.Context, data string, info *relaycommon.RelayInfo
 		return err
 	}
 
+	if c.Request != nil && c.Request.Context().Err() != nil {
+		return nil
+	}
+
 	// send gemini format response
 	c.Render(-1, common.CustomEvent{Data: "data: " + string(geminiResponseStr)})
 	_ = helper.FlushWriter(c)
@@ -244,6 +248,10 @@ func HandleFinalResponse(c *gin.Context, info *relaycommon.RelayInfo, lastStream
 		geminiResponseStr, err := common.Marshal(geminiResponse)
 		if err != nil {
 			common.SysLog("error marshalling gemini response: " + err.Error())
+			return
+		}
+
+		if c.Request != nil && c.Request.Context().Err() != nil {
 			return
 		}
 
