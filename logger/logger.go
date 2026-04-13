@@ -24,9 +24,9 @@ const (
 	loggerDebug = "DEBUG"
 )
 
-const maxLogCount = 1000000
+const maxLogSize = 50 * 1024 * 1024 // 50 MB
 
-var logCount int
+var logSize int64
 var setupLogLock sync.Mutex
 var setupLogWorking bool
 var currentLogPath string
@@ -61,6 +61,7 @@ func SetupLogger() {
 		oldFile := currentLogFile
 		currentLogPath = logPath
 		currentLogFile = fd
+		logSize = 0
 		currentLogPathMu.Unlock()
 
 		common.LogWriterMu.Lock()
@@ -105,11 +106,10 @@ func logHelper(ctx context.Context, level string, msg string) {
 	if level == loggerINFO {
 		writer = gin.DefaultWriter
 	}
-	_, _ = fmt.Fprintf(writer, "[%s] %v | %s | %s \n", level, now.Format("2006/01/02 - 15:04:05"), id, msg)
+	n, _ := fmt.Fprintf(writer, "[%s] %v | %s | %s \n", level, now.Format("2006/01/02 - 15:04:05"), id, msg)
 	common.LogWriterMu.RUnlock()
-	logCount++ // we don't need accurate count, so no lock here
-	if logCount > maxLogCount && !setupLogWorking {
-		logCount = 0
+	logSize += int64(n) // we don't need accurate count, so no lock here
+	if logSize > maxLogSize && !setupLogWorking {
 		setupLogWorking = true
 		gopool.Go(func() {
 			SetupLogger()
