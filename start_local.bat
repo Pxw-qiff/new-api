@@ -17,8 +17,8 @@ set SESSION_SECRET=secret_chuamgwei_session_gateway_newapi_982
 set CHANNEL_UPDATE_FREQUENCY=1
 set CHANNEL_TEST_FREQUENCY=5
 
-echo [*] Target DB: 47.94.16.23:13306/chuamgwei_gateway
-echo [*] Target Redis: 47.94.16.23:26739
+echo [*] Target DB: 127.0.0.1:13306/chuamgwei_gateway
+echo [*] Target Redis: 127.0.0.1:6379
 echo [*] Gateway Port: 3000
 echo [*] Register Disabled: TRUE
 echo ===================================================
