@@ -64,16 +64,16 @@ const About = () => {
       <p>{t('可在设置页面设置关于内容，支持 HTML & Markdown')}</p>
       {t('New API项目仓库地址：')}
       <a
-        href='https://github.com/QuantumNous/new-api'
+        href='https://github.com/Pxw-qiff/new-api'
         target='_blank'
         rel='noopener noreferrer'
         className='!text-semi-color-primary'
       >
-        https://github.com/QuantumNous/new-api
+        https://github.com/Pxw-qiff/new-api
       </a>
       <p>
         <a
-          href='https://github.com/QuantumNous/new-api'
+          href='https://github.com/Pxw-qiff/new-api'
           target='_blank'
           rel='noopener noreferrer'
           className='!text-semi-color-primary'
@@ -82,12 +82,12 @@ const About = () => {
         </a>{' '}
         {t('© {{currentYear}}', { currentYear })}{' '}
         <a
-          href='https://github.com/QuantumNous'
+          href='https://github.com/Pxw-qiff'
           target='_blank'
           rel='noopener noreferrer'
           className='!text-semi-color-primary'
         >
-          QuantumNous
+          Pxw-qiff
         </a>{' '}
         {t('| 基于')}{' '}
         <a
