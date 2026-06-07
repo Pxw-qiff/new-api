@@ -202,7 +202,7 @@ func RelaySwapFace(c *gin.Context, info *relaycommon.RelayInfo) *dto.MidjourneyR
 		}
 	}
 
-	userQuota, err := model.GetUserQuota(info.UserId, false)
+	userQuota, creditUserUuid, err := service.GetMidjourneyWalletQuota(info.UserId)
 	if err != nil {
 		return &dto.MidjourneyResponse{
 			Code:        4,
@@ -216,6 +216,7 @@ func RelaySwapFace(c *gin.Context, info *relaycommon.RelayInfo) *dto.MidjourneyR
 			Description: "quota_not_enough",
 		}
 	}
+	creditBizOrderNo := service.BuildMidjourneyCreditBizOrderNo(info)
 	requestURL := getMjRequestPath(c.Request.URL.String())
 	baseURL := c.GetString("base_url")
 	fullRequestURL := fmt.Sprintf("%s%s", baseURL, requestURL)
@@ -223,11 +224,22 @@ func RelaySwapFace(c *gin.Context, info *relaycommon.RelayInfo) *dto.MidjourneyR
 	if err != nil {
 		return &mjResp.Response
 	}
+	var midjourneyTask *model.Midjourney
 	defer func() {
 		if mjResp.StatusCode == 200 && mjResp.Response.Code == 1 {
-			err := service.PostConsumeQuota(info, priceData.Quota, 0, true)
-			if err != nil {
-				common.SysLog("error consuming token remain quota: " + err.Error())
+			if service.IsChuamgweiCreditEnabled() {
+				err := service.PreConsumeMidjourneyCredit(info, creditUserUuid, creditBizOrderNo, priceData.Quota, constant.MjActionSwapFace)
+				if err != nil {
+					common.SysLog("error pre-consuming Midjourney credit: " + err.Error())
+				}
+			} else {
+				err := service.PostConsumeQuota(info, priceData.Quota, 0, true)
+				if err != nil {
+					common.SysLog("error consuming token remain quota: " + err.Error())
+				}
+			}
+			if service.MidjourneyUsesExternalCredit(midjourneyTask) && midjourneyTask.Progress == "100%" && midjourneyTask.Status == "SUCCESS" {
+				service.SettleMidjourneyQuota(c, midjourneyTask, "Midjourney immediate success")
 			}
 
 			tokenName := c.GetString("token_name")
@@ -248,24 +260,26 @@ func RelaySwapFace(c *gin.Context, info *relaycommon.RelayInfo) *dto.MidjourneyR
 		}
 	}()
 	midjResponse := &mjResp.Response
-	midjourneyTask := &model.Midjourney{
-		UserId:      info.UserId,
-		Code:        midjResponse.Code,
-		Action:      constant.MjActionSwapFace,
-		MjId:        midjResponse.Result,
-		Prompt:      "InsightFace",
-		PromptEn:    "",
-		Description: midjResponse.Description,
-		State:       "",
-		SubmitTime:  info.StartTime.UnixNano() / int64(time.Millisecond),
-		StartTime:   time.Now().UnixNano() / int64(time.Millisecond),
-		FinishTime:  0,
-		ImageUrl:    "",
-		Status:      "",
-		Progress:    "0%",
-		FailReason:  "",
-		ChannelId:   c.GetInt("channel_id"),
-		Quota:       priceData.Quota,
+	midjourneyTask = &model.Midjourney{
+		UserId:            info.UserId,
+		Code:              midjResponse.Code,
+		Action:            constant.MjActionSwapFace,
+		MjId:              midjResponse.Result,
+		Prompt:            "InsightFace",
+		PromptEn:          "",
+		Description:       midjResponse.Description,
+		State:             "",
+		SubmitTime:        info.StartTime.UnixNano() / int64(time.Millisecond),
+		StartTime:         time.Now().UnixNano() / int64(time.Millisecond),
+		FinishTime:        0,
+		ImageUrl:          "",
+		Status:            "",
+		Progress:          "0%",
+		FailReason:        "",
+		ChannelId:         c.GetInt("channel_id"),
+		Quota:             priceData.Quota,
+		ChuamgweiUserUuid: creditUserUuid,
+		CreditBizOrderNo:  creditBizOrderNo,
 	}
 	err = midjourneyTask.Insert()
 	if err != nil {
@@ -509,7 +523,7 @@ func RelayMidjourneySubmit(c *gin.Context, relayInfo *relaycommon.RelayInfo) *dt
 		}
 	}
 
-	userQuota, err := model.GetUserQuota(relayInfo.UserId, false)
+	userQuota, creditUserUuid, err := service.GetMidjourneyWalletQuota(relayInfo.UserId)
 	if err != nil {
 		return &dto.MidjourneyResponse{
 			Code:        4,
@@ -524,17 +538,26 @@ func RelayMidjourneySubmit(c *gin.Context, relayInfo *relaycommon.RelayInfo) *dt
 		}
 	}
 
+	creditBizOrderNo := service.BuildMidjourneyCreditBizOrderNo(relayInfo)
 	midjResponseWithStatus, responseBody, err := service.DoMidjourneyHttpRequest(c, time.Second*60, fullRequestURL)
 	if err != nil {
 		return &midjResponseWithStatus.Response
 	}
 	midjResponse := &midjResponseWithStatus.Response
 
+	var midjourneyTask *model.Midjourney
 	defer func() {
 		if consumeQuota && midjResponseWithStatus.StatusCode == 200 {
-			err := service.PostConsumeQuota(relayInfo, priceData.Quota, 0, true)
-			if err != nil {
-				common.SysLog("error consuming token remain quota: " + err.Error())
+			if service.IsChuamgweiCreditEnabled() {
+				err := service.PreConsumeMidjourneyCredit(relayInfo, creditUserUuid, creditBizOrderNo, priceData.Quota, midjRequest.Action)
+				if err != nil {
+					common.SysLog("error pre-consuming Midjourney credit: " + err.Error())
+				}
+			} else {
+				err := service.PostConsumeQuota(relayInfo, priceData.Quota, 0, true)
+				if err != nil {
+					common.SysLog("error consuming token remain quota: " + err.Error())
+				}
 			}
 			tokenName := c.GetString("token_name")
 			logContent := fmt.Sprintf("模型固定价格 %.2f，分组倍率 %.2f，操作 %s，ID %s", priceData.ModelPrice, priceData.GroupRatioInfo.GroupRatio, midjRequest.Action, midjResponse.Result)
@@ -561,24 +584,26 @@ func RelayMidjourneySubmit(c *gin.Context, relayInfo *relaycommon.RelayInfo) *dt
 	// 23-队列已满，请稍后再试 {"code":23,"description":"队列已满，请稍后尝试","result":"14001929738841620","properties":{"discordInstanceId":"1118138338562560102"}}
 	// 24-prompt包含敏感词 {"code":24,"description":"可能包含敏感词","properties":{"promptEn":"nude body","bannedWord":"nude"}}
 	// other: 提交错误，description为错误描述
-	midjourneyTask := &model.Midjourney{
-		UserId:      relayInfo.UserId,
-		Code:        midjResponse.Code,
-		Action:      midjRequest.Action,
-		MjId:        midjResponse.Result,
-		Prompt:      midjRequest.Prompt,
-		PromptEn:    "",
-		Description: midjResponse.Description,
-		State:       "",
-		SubmitTime:  time.Now().UnixNano() / int64(time.Millisecond),
-		StartTime:   0,
-		FinishTime:  0,
-		ImageUrl:    "",
-		Status:      "",
-		Progress:    "0%",
-		FailReason:  "",
-		ChannelId:   c.GetInt("channel_id"),
-		Quota:       priceData.Quota,
+	midjourneyTask = &model.Midjourney{
+		UserId:            relayInfo.UserId,
+		Code:              midjResponse.Code,
+		Action:            midjRequest.Action,
+		MjId:              midjResponse.Result,
+		Prompt:            midjRequest.Prompt,
+		PromptEn:          "",
+		Description:       midjResponse.Description,
+		State:             "",
+		SubmitTime:        time.Now().UnixNano() / int64(time.Millisecond),
+		StartTime:         0,
+		FinishTime:        0,
+		ImageUrl:          "",
+		Status:            "",
+		Progress:          "0%",
+		FailReason:        "",
+		ChannelId:         c.GetInt("channel_id"),
+		Quota:             priceData.Quota,
+		ChuamgweiUserUuid: creditUserUuid,
+		CreditBizOrderNo:  creditBizOrderNo,
 	}
 	if midjResponse.Code == 3 {
 		//无实例账号自动禁用渠道（No available account instance）

@@ -78,7 +78,9 @@ func sweepTimedOutTasks(ctx context.Context) {
 		}
 		timedOutCount++
 		if !isLegacy && task.Quota != 0 {
-			RefundTaskQuota(ctx, task, reason)
+			if err := RefundTaskQuota(ctx, task, reason); err != nil {
+				logger.LogWarn(ctx, fmt.Sprintf("任务 %s 超时退款失败: %s", task.TaskID, err.Error()))
+			}
 		}
 	}
 
@@ -97,6 +99,12 @@ func TaskPollingLoop() {
 		allTasks := model.GetAllUnFinishSyncTasks(constant.TaskQueryLimit)
 		platformTask := make(map[constant.TaskPlatform][]*model.Task)
 		for _, t := range allTasks {
+			if taskBillingRequiresRetry(t) && (t.Status == model.TaskStatusSuccess || t.Status == model.TaskStatusFailure) {
+				if err := retryPendingTaskBilling(ctx, t); err != nil {
+					logger.LogWarn(ctx, fmt.Sprintf("任务 %s 账务补偿重试失败: %s", t.TaskID, err.Error()))
+				}
+				continue
+			}
 			platformTask[t.Platform] = append(platformTask[t.Platform], t)
 		}
 		for platform, tasks := range platformTask {
@@ -234,7 +242,9 @@ func updateSunoTasks(ctx context.Context, channelId int, taskIds []string, taskM
 		if responseItem.FailReason != "" || task.Status == model.TaskStatusFailure {
 			logger.LogInfo(ctx, task.TaskID+" 构建失败，"+task.FailReason)
 			task.Progress = "100%"
-			RefundTaskQuota(ctx, task, task.FailReason)
+			if err := RefundTaskQuota(ctx, task, task.FailReason); err != nil {
+				logger.LogWarn(ctx, fmt.Sprintf("Suno 任务 %s 退款失败: %s", task.TaskID, err.Error()))
+			}
 		}
 		if responseItem.Status == model.TaskStatusSuccess {
 			task.Progress = "100%"
@@ -492,10 +502,14 @@ func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *
 	}
 
 	if shouldSettle {
-		settleTaskBillingOnComplete(ctx, adaptor, task, taskResult)
+		if err := settleTaskBillingOnComplete(ctx, adaptor, task, taskResult); err != nil {
+			logger.LogWarn(ctx, fmt.Sprintf("任务 %s 结算失败: %s", task.TaskID, err.Error()))
+		}
 	}
 	if shouldRefund {
-		RefundTaskQuota(ctx, task, task.FailReason)
+		if err := RefundTaskQuota(ctx, task, task.FailReason); err != nil {
+			logger.LogWarn(ctx, fmt.Sprintf("任务 %s 退款失败: %s", task.TaskID, err.Error()))
+		}
 	}
 
 	return nil
@@ -540,21 +554,19 @@ func truncateBase64(s string) string {
 //
 //  2. taskResult.TotalTokens > 0 → 按 token 重算
 //  3. 都不满足 → 保持预扣额度不变
-func settleTaskBillingOnComplete(ctx context.Context, adaptor TaskPollingAdaptor, task *model.Task, taskResult *relaycommon.TaskInfo) {
-	// 0. 按次计费的任务不做差额结算
+func settleTaskBillingOnComplete(ctx context.Context, adaptor TaskPollingAdaptor, task *model.Task, taskResult *relaycommon.TaskInfo) error {
+	// 0. 按次计费任务不做差额计算，但外部积分仍需要把预扣单推进到结算态。
 	if bc := task.PrivateData.BillingContext; bc != nil && bc.PerCallBilling {
-		logger.LogInfo(ctx, fmt.Sprintf("任务 %s 按次计费，跳过差额结算", task.TaskID))
-		return
+		return RecalculateTaskQuota(ctx, task, taskSubmitQuota(task), "按次计费任务完成结算")
 	}
 	// 1. 优先让 adaptor 决定最终额度
 	if actualQuota := adaptor.AdjustBillingOnComplete(task, taskResult); actualQuota > 0 {
-		RecalculateTaskQuota(ctx, task, actualQuota, "adaptor计费调整")
-		return
+		return RecalculateTaskQuota(ctx, task, actualQuota, "adaptor计费调整")
 	}
 	// 2. 回退到 token 重算
 	if taskResult.TotalTokens > 0 {
-		RecalculateTaskQuotaByTokens(ctx, task, taskResult.TotalTokens)
-		return
+		return RecalculateTaskQuotaByTokens(ctx, task, taskResult.TotalTokens)
 	}
-	// 3. 无调整，保持预扣额度
+	// 3. 无调整，按预扣额度完成结算
+	return RecalculateTaskQuota(ctx, task, taskSubmitQuota(task), "任务完成按预扣额度结算")
 }

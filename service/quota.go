@@ -90,6 +90,9 @@ func PreWssConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, usag
 	if relayInfo.UsePrice {
 		return nil
 	}
+	if IsChuamgweiCreditEnabled() && relayInfo.BillingSource == BillingSourceWallet {
+		return nil
+	}
 	userQuota, err := model.GetUserQuota(relayInfo.UserId, false)
 	if err != nil {
 		return err
@@ -404,6 +407,22 @@ func PreConsumeTokenQuota(relayInfo *relaycommon.RelayInfo, quota int) error {
 }
 
 func PostConsumeQuota(relayInfo *relaycommon.RelayInfo, quota int, preConsumedQuota int, sendEmail bool) (err error) {
+	if relayInfo != nil && relayInfo.Billing != nil {
+		actualQuota := preConsumedQuota + quota
+		if actualQuota < 0 {
+			actualQuota = 0
+		}
+		if err := relayInfo.Billing.Settle(actualQuota); err != nil {
+			return err
+		}
+		if sendEmail && actualQuota != 0 {
+			checkAndSendQuotaNotify(relayInfo, quota, preConsumedQuota)
+		}
+		return nil
+	}
+	if IsChuamgweiCreditEnabled() {
+		return errors.New("外部积分账本缺少计费会话，已拒绝旧账本结算")
+	}
 
 	// 1) Consume from wallet quota OR subscription item
 	if relayInfo != nil && relayInfo.BillingSource == BillingSourceSubscription {

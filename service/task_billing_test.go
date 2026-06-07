@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"testing"
 	"time"
@@ -133,6 +134,32 @@ func makeTask(userId, channelId, quota, tokenId int, billingSource string, subsc
 			},
 		},
 	}
+}
+
+func makeExternalCreditTask(userId, channelId, quota, tokenId int, bizOrderNo string) *model.Task {
+	task := makeTask(userId, channelId, quota, tokenId, BillingSourceWallet, 0)
+	task.PrivateData.ChuamgweiUserUuid = "chuamgwei-user-uuid"
+	task.PrivateData.CreditBizOrderNo = bizOrderNo
+	return task
+}
+
+func withCreditServer(t *testing.T, handler http.HandlerFunc) {
+	t.Helper()
+	server := httptest.NewServer(handler)
+	t.Cleanup(server.Close)
+	t.Setenv("CHUAMGWEI_CREDIT_ENABLED", "true")
+	t.Setenv("CHUAMGWEI_CREDIT_BASE_URL", server.URL)
+	t.Setenv("CHUAMGWEI_CREDIT_INTERNAL_SECRET", "test-secret")
+}
+
+func writeCreditOK(w http.ResponseWriter) {
+	w.Header().Set("Content-Type", "application/json")
+	_, _ = w.Write([]byte(`{"code":200,"message":"ok","data":null}`))
+}
+
+func writeCreditFail(w http.ResponseWriter) {
+	w.Header().Set("Content-Type", "application/json")
+	_, _ = w.Write([]byte(`{"code":500,"message":"temporary failure","data":null}`))
 }
 
 // ---------------------------------------------------------------------------
@@ -713,4 +740,112 @@ func TestSettle_NonPerCall_AdaptorAdjustWorks(t *testing.T) {
 	log := getLastLog(t)
 	require.NotNil(t, log)
 	assert.Equal(t, model.LogTypeRefund, log.Type)
+}
+
+func TestExternalSettleFailureMarksPending(t *testing.T) {
+	truncate(t)
+	ctx := context.Background()
+
+	const userID, tokenID, channelID = 40, 40, 40
+	const preConsumed, actualQuota = 2000, 3000
+	const tokenRemain = 8000
+
+	seedUser(t, userID, 0)
+	seedToken(t, tokenID, userID, "sk-ext-settle-fail", tokenRemain)
+	seedChannel(t, channelID)
+	withCreditServer(t, func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "/internal/credit/settle", r.URL.Path)
+		writeCreditFail(w)
+	})
+
+	task := makeExternalCreditTask(userID, channelID, preConsumed, tokenID, "task-settle-fail")
+	require.NoError(t, model.DB.Create(task).Error)
+
+	err := RecalculateTaskQuota(ctx, task, actualQuota, "settle temporary failure")
+	require.Error(t, err)
+
+	var reloaded model.Task
+	require.NoError(t, model.DB.First(&reloaded, task.ID).Error)
+	assert.Equal(t, model.TaskBillingStatusPendingSettle, reloaded.PrivateData.BillingStatus)
+	assert.Equal(t, actualQuota, reloaded.PrivateData.BillingRetryQuota)
+	assert.NotEmpty(t, reloaded.PrivateData.BillingError)
+	assert.Equal(t, preConsumed, reloaded.Quota)
+	assert.Equal(t, tokenRemain, getTokenRemainQuota(t, tokenID))
+}
+
+func TestRetryPendingSettleCompletesExternalBilling(t *testing.T) {
+	truncate(t)
+	ctx := context.Background()
+
+	const userID, tokenID, channelID = 41, 41, 41
+	const preConsumed, actualQuota = 2000, 3500
+	const tokenRemain = 9000
+
+	seedUser(t, userID, 0)
+	seedToken(t, tokenID, userID, "sk-ext-settle-retry", tokenRemain)
+	seedChannel(t, channelID)
+	withCreditServer(t, func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "/internal/credit/settle", r.URL.Path)
+		writeCreditOK(w)
+	})
+
+	task := makeExternalCreditTask(userID, channelID, preConsumed, tokenID, "task-settle-retry")
+	task.PrivateData.BillingStatus = model.TaskBillingStatusPendingSettle
+	task.PrivateData.BillingRetryQuota = actualQuota
+	task.PrivateData.BillingRetryReason = "retry settle"
+	require.NoError(t, model.DB.Create(task).Error)
+
+	err := retryPendingTaskBilling(ctx, task)
+	require.NoError(t, err)
+
+	var reloaded model.Task
+	require.NoError(t, model.DB.First(&reloaded, task.ID).Error)
+	assert.Equal(t, model.TaskBillingStatusSettled, reloaded.PrivateData.BillingStatus)
+	assert.Empty(t, reloaded.PrivateData.BillingError)
+	assert.Equal(t, actualQuota, reloaded.Quota)
+	assert.Equal(t, tokenRemain-(actualQuota-preConsumed), getTokenRemainQuota(t, tokenID))
+}
+
+func TestExternalRefundFailureCanRetry(t *testing.T) {
+	truncate(t)
+	ctx := context.Background()
+
+	const userID, tokenID, channelID = 42, 42, 42
+	const preConsumed = 2500
+	const tokenRemain = 7000
+	calls := 0
+
+	seedUser(t, userID, 0)
+	seedToken(t, tokenID, userID, "sk-ext-refund-retry", tokenRemain)
+	seedChannel(t, channelID)
+	withCreditServer(t, func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "/internal/credit/refund", r.URL.Path)
+		calls++
+		if calls == 1 {
+			writeCreditFail(w)
+			return
+		}
+		writeCreditOK(w)
+	})
+
+	task := makeExternalCreditTask(userID, channelID, preConsumed, tokenID, "task-refund-retry")
+	require.NoError(t, model.DB.Create(task).Error)
+
+	err := RefundTaskQuota(ctx, task, "first refund failed")
+	require.Error(t, err)
+
+	var reloaded model.Task
+	require.NoError(t, model.DB.First(&reloaded, task.ID).Error)
+	assert.Equal(t, model.TaskBillingStatusPendingRefund, reloaded.PrivateData.BillingStatus)
+	assert.NotEmpty(t, reloaded.PrivateData.BillingError)
+	assert.Equal(t, tokenRemain, getTokenRemainQuota(t, tokenID))
+
+	err = retryPendingTaskBilling(ctx, &reloaded)
+	require.NoError(t, err)
+
+	var completed model.Task
+	require.NoError(t, model.DB.First(&completed, task.ID).Error)
+	assert.Equal(t, model.TaskBillingStatusRefunded, completed.PrivateData.BillingStatus)
+	assert.Empty(t, completed.PrivateData.BillingError)
+	assert.Equal(t, tokenRemain+preConsumed, getTokenRemainQuota(t, tokenID))
 }

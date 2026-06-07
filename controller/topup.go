@@ -23,15 +23,16 @@ import (
 
 func GetTopUpInfo(c *gin.Context) {
 	complianceConfirmed := operation_setting.IsPaymentComplianceConfirmed()
+	externalCreditEnabled := service.IsChuamgweiCreditEnabled()
 
 	// 获取支付方式
 	payMethods := operation_setting.PayMethods
-	if !complianceConfirmed {
+	if !complianceConfirmed || externalCreditEnabled {
 		payMethods = []map[string]string{}
 	}
 
 	// 如果启用了 Stripe 支付，添加到支付方法列表
-	if isStripeTopUpEnabled() {
+	if !externalCreditEnabled && isStripeTopUpEnabled() {
 		// 检查是否已经包含 Stripe
 		hasStripe := false
 		for _, method := range payMethods {
@@ -53,7 +54,7 @@ func GetTopUpInfo(c *gin.Context) {
 	}
 
 	// Waffo Pancake displayed above the legacy Waffo gateway.
-	enableWaffoPancake := isWaffoPancakeTopUpEnabled()
+	enableWaffoPancake := !externalCreditEnabled && isWaffoPancakeTopUpEnabled()
 	if enableWaffoPancake {
 		hasWaffoPancake := false
 		for _, method := range payMethods {
@@ -74,7 +75,7 @@ func GetTopUpInfo(c *gin.Context) {
 	}
 
 	// 如果启用了 Waffo 支付，添加到支付方法列表
-	enableWaffo := isWaffoTopUpEnabled()
+	enableWaffo := !externalCreditEnabled && isWaffoTopUpEnabled()
 	if enableWaffo {
 		hasWaffo := false
 		for _, method := range payMethods {
@@ -96,12 +97,12 @@ func GetTopUpInfo(c *gin.Context) {
 	}
 
 	data := gin.H{
-		"enable_online_topup":              isEpayTopUpEnabled(),
-		"enable_stripe_topup":              isStripeTopUpEnabled(),
-		"enable_creem_topup":               isCreemTopUpEnabled(),
+		"enable_online_topup":              !externalCreditEnabled && isEpayTopUpEnabled(),
+		"enable_stripe_topup":              !externalCreditEnabled && isStripeTopUpEnabled(),
+		"enable_creem_topup":               !externalCreditEnabled && isCreemTopUpEnabled(),
 		"enable_waffo_topup":               enableWaffo,
 		"enable_waffo_pancake_topup":       enableWaffoPancake,
-		"enable_redemption":                complianceConfirmed,
+		"enable_redemption":                !externalCreditEnabled && complianceConfirmed,
 		"payment_compliance_confirmed":     complianceConfirmed,
 		"payment_compliance_terms_version": operation_setting.CurrentComplianceTermsVersion,
 		"waffo_pay_methods": func() interface{} {
@@ -130,6 +131,14 @@ type EpayRequest struct {
 
 type AmountRequest struct {
 	Amount int64 `json:"amount"`
+}
+
+func rejectExternalCreditTopUp(c *gin.Context) bool {
+	if !service.IsChuamgweiCreditEnabled() {
+		return false
+	}
+	c.JSON(http.StatusOK, gin.H{"message": "error", "data": "已接入统一积分账本，请在主站充值"})
+	return true
 }
 
 func GetEpayClient() *epay.Client {
@@ -187,6 +196,9 @@ func getMinTopup() int64 {
 }
 
 func RequestEpay(c *gin.Context) {
+	if rejectExternalCreditTopUp(c) {
+		return
+	}
 	var req EpayRequest
 	err := c.ShouldBindJSON(&req)
 	if err != nil {
@@ -370,6 +382,11 @@ func EpayNotify(c *gin.Context) {
 		return
 	}
 
+	if service.IsChuamgweiCreditEnabled() {
+		logger.LogWarn(c.Request.Context(), fmt.Sprintf("易支付 webhook 已验签但跳过旧账本入账 reason=external_credit_enabled trade_no=%s callback_type=%s client_ip=%s", verifyInfo.ServiceTradeNo, verifyInfo.Type, c.ClientIP()))
+		return
+	}
+
 	if verifyInfo.TradeStatus == epay.StatusTradeSuccess {
 		LockOrder(verifyInfo.ServiceTradeNo)
 		defer UnlockOrder(verifyInfo.ServiceTradeNo)
@@ -412,6 +429,9 @@ func EpayNotify(c *gin.Context) {
 }
 
 func RequestAmount(c *gin.Context) {
+	if rejectExternalCreditTopUp(c) {
+		return
+	}
 	var req AmountRequest
 	err := c.ShouldBindJSON(&req)
 	if err != nil {
@@ -493,6 +513,9 @@ type AdminCompleteTopupRequest struct {
 
 // AdminCompleteTopUp 管理员补单接口
 func AdminCompleteTopUp(c *gin.Context) {
+	if rejectExternalCreditTopUp(c) {
+		return
+	}
 	var req AdminCompleteTopupRequest
 	if err := c.ShouldBindJSON(&req); err != nil || req.TradeNo == "" {
 		common.ApiErrorMsg(c, "参数错误")

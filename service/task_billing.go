@@ -84,6 +84,20 @@ func taskIsSubscription(task *model.Task) bool {
 	return task.PrivateData.BillingSource == BillingSourceSubscription && task.PrivateData.SubscriptionId > 0
 }
 
+func taskUsesExternalCredit(task *model.Task) bool {
+	return IsChuamgweiCreditEnabled() &&
+		task.PrivateData.BillingSource == BillingSourceWallet &&
+		task.PrivateData.ChuamgweiUserUuid != "" &&
+		task.PrivateData.CreditBizOrderNo != ""
+}
+
+func taskSubmitQuota(task *model.Task) int {
+	if task.PrivateData.SubmitQuota > 0 {
+		return task.PrivateData.SubmitQuota
+	}
+	return task.Quota
+}
+
 // taskAdjustFunding 调整任务的资金来源（钱包或订阅），delta > 0 表示扣费，delta < 0 表示退还。
 func taskAdjustFunding(task *model.Task, delta int) error {
 	if taskIsSubscription(task) {
@@ -147,18 +161,91 @@ func taskModelName(task *model.Task) string {
 	return task.Properties.OriginModelName
 }
 
+func taskBillingCompleted(task *model.Task, status string) bool {
+	return taskUsesExternalCredit(task) && task.PrivateData.BillingStatus == status
+}
+
+func markTaskBillingPending(ctx context.Context, task *model.Task, status string, quota int, reason string, err error) {
+	task.PrivateData.BillingStatus = status
+	task.PrivateData.BillingRetryQuota = quota
+	task.PrivateData.BillingRetryReason = reason
+	if err != nil {
+		task.PrivateData.BillingError = err.Error()
+	}
+	if saveErr := task.UpdateBillingFields(); saveErr != nil {
+		logger.LogError(ctx, fmt.Sprintf("保存任务账务待补偿状态失败 task %s: %s", task.TaskID, saveErr.Error()))
+	}
+}
+
+func markTaskBillingComplete(ctx context.Context, task *model.Task, status string, quota int) error {
+	task.PrivateData.BillingStatus = status
+	task.PrivateData.BillingError = ""
+	task.PrivateData.BillingRetryQuota = 0
+	task.PrivateData.BillingRetryReason = ""
+	if quota > 0 {
+		task.Quota = quota
+	}
+	if err := task.UpdateBillingFields(); err != nil {
+		logger.LogError(ctx, fmt.Sprintf("保存任务账务完成状态失败 task %s: %s", task.TaskID, err.Error()))
+		return err
+	}
+	return nil
+}
+
+func taskBillingRequiresRetry(task *model.Task) bool {
+	if !taskUsesExternalCredit(task) {
+		return false
+	}
+	return task.PrivateData.BillingStatus == model.TaskBillingStatusPendingSettle ||
+		task.PrivateData.BillingStatus == model.TaskBillingStatusPendingRefund
+}
+
+func retryPendingTaskBilling(ctx context.Context, task *model.Task) error {
+	if !taskBillingRequiresRetry(task) {
+		return nil
+	}
+	reason := task.PrivateData.BillingRetryReason
+	if reason == "" {
+		reason = "终态账务补偿重试"
+	}
+	switch task.PrivateData.BillingStatus {
+	case model.TaskBillingStatusPendingSettle:
+		quota := task.PrivateData.BillingRetryQuota
+		if quota <= 0 {
+			quota = taskSubmitQuota(task)
+		}
+		return RecalculateTaskQuota(ctx, task, quota, reason)
+	case model.TaskBillingStatusPendingRefund:
+		return RefundTaskQuota(ctx, task, reason)
+	default:
+		return nil
+	}
+}
+
 // RefundTaskQuota 统一的任务失败退款逻辑。
 // 当异步任务失败时，将预扣的 quota 退还给用户（支持钱包和订阅），并退还令牌额度。
-func RefundTaskQuota(ctx context.Context, task *model.Task, reason string) {
+func RefundTaskQuota(ctx context.Context, task *model.Task, reason string) error {
 	quota := task.Quota
 	if quota == 0 {
-		return
+		return nil
 	}
 
 	// 1. 退还资金来源（钱包或订阅）
-	if err := taskAdjustFunding(task, -quota); err != nil {
+	if taskUsesExternalCredit(task) {
+		if taskBillingCompleted(task, model.TaskBillingStatusRefunded) {
+			return nil
+		}
+		if err := RefundChuamgweiCredit(task.PrivateData.ChuamgweiUserUuid, task.PrivateData.CreditBizOrderNo, fmt.Sprintf("异步任务失败退款，taskId=%s，reason=%s", task.TaskID, reason)); err != nil {
+			logger.LogWarn(ctx, fmt.Sprintf("退还外部积分失败 task %s: %s", task.TaskID, err.Error()))
+			markTaskBillingPending(ctx, task, model.TaskBillingStatusPendingRefund, quota, reason, err)
+			return err
+		}
+		if err := markTaskBillingComplete(ctx, task, model.TaskBillingStatusRefunded, quota); err != nil {
+			return err
+		}
+	} else if err := taskAdjustFunding(task, -quota); err != nil {
 		logger.LogWarn(ctx, fmt.Sprintf("退还资金来源失败 task %s: %s", task.TaskID, err.Error()))
-		return
+		return err
 	}
 
 	// 2. 退还令牌额度
@@ -179,22 +266,36 @@ func RefundTaskQuota(ctx context.Context, task *model.Task, reason string) {
 		Group:     task.Group,
 		Other:     other,
 	})
+	return nil
 }
 
 // RecalculateTaskQuota 通用的异步差额结算。
 // actualQuota 是任务完成后的实际应扣额度，与预扣额度 (task.Quota) 做差额结算。
 // reason 用于日志记录（例如 "token重算" 或 "adaptor调整"）。
-func RecalculateTaskQuota(ctx context.Context, task *model.Task, actualQuota int, reason string) {
+func RecalculateTaskQuota(ctx context.Context, task *model.Task, actualQuota int, reason string) error {
 	if actualQuota <= 0 {
-		return
+		return nil
+	}
+	if taskBillingCompleted(task, model.TaskBillingStatusSettled) {
+		return nil
 	}
 	preConsumedQuota := task.Quota
 	quotaDelta := actualQuota - preConsumedQuota
 
 	if quotaDelta == 0 {
+		if taskUsesExternalCredit(task) {
+			if err := SettleChuamgweiCredit(task.PrivateData.ChuamgweiUserUuid, task.PrivateData.CreditBizOrderNo, actualQuota, fmt.Sprintf("异步任务完成结算，taskId=%s，%s", task.TaskID, reason)); err != nil {
+				logger.LogError(ctx, fmt.Sprintf("外部积分结算失败 task %s: %s", task.TaskID, err.Error()))
+				markTaskBillingPending(ctx, task, model.TaskBillingStatusPendingSettle, actualQuota, reason, err)
+				return err
+			}
+			if err := markTaskBillingComplete(ctx, task, model.TaskBillingStatusSettled, actualQuota); err != nil {
+				return err
+			}
+		}
 		logger.LogInfo(ctx, fmt.Sprintf("任务 %s 预扣费准确（%s，%s）",
 			task.TaskID, logger.LogQuota(actualQuota), reason))
-		return
+		return nil
 	}
 
 	logger.LogInfo(ctx, fmt.Sprintf("任务 %s 差额结算：delta=%s（实际：%s，预扣：%s，%s）",
@@ -206,15 +307,24 @@ func RecalculateTaskQuota(ctx context.Context, task *model.Task, actualQuota int
 	))
 
 	// 调整资金来源
-	if err := taskAdjustFunding(task, quotaDelta); err != nil {
+	if taskUsesExternalCredit(task) {
+		if err := SettleChuamgweiCredit(task.PrivateData.ChuamgweiUserUuid, task.PrivateData.CreditBizOrderNo, actualQuota, fmt.Sprintf("异步任务完成结算，taskId=%s，%s", task.TaskID, reason)); err != nil {
+			logger.LogError(ctx, fmt.Sprintf("外部积分结算失败 task %s: %s", task.TaskID, err.Error()))
+			markTaskBillingPending(ctx, task, model.TaskBillingStatusPendingSettle, actualQuota, reason, err)
+			return err
+		}
+		if err := markTaskBillingComplete(ctx, task, model.TaskBillingStatusSettled, actualQuota); err != nil {
+			return err
+		}
+	} else if err := taskAdjustFunding(task, quotaDelta); err != nil {
 		logger.LogError(ctx, fmt.Sprintf("差额结算资金调整失败 task %s: %s", task.TaskID, err.Error()))
-		return
+		return err
+	} else {
+		task.Quota = actualQuota
 	}
 
 	// 调整令牌额度
 	taskAdjustTokenQuota(ctx, task, quotaDelta)
-
-	task.Quota = actualQuota
 
 	var logType int
 	var logQuota int
@@ -242,14 +352,15 @@ func RecalculateTaskQuota(ctx context.Context, task *model.Task, actualQuota int
 		Group:     task.Group,
 		Other:     other,
 	})
+	return nil
 }
 
 // RecalculateTaskQuotaByTokens 根据实际 token 消耗重新计费（异步差额结算）。
 // 当任务成功且返回了 totalTokens 时，根据模型倍率和分组倍率重新计算实际扣费额度，
 // 与预扣费的差额进行补扣或退还。支持钱包和订阅计费来源。
-func RecalculateTaskQuotaByTokens(ctx context.Context, task *model.Task, totalTokens int) {
+func RecalculateTaskQuotaByTokens(ctx context.Context, task *model.Task, totalTokens int) error {
 	if totalTokens <= 0 {
-		return
+		return nil
 	}
 
 	modelName := taskModelName(task)
@@ -258,7 +369,7 @@ func RecalculateTaskQuotaByTokens(ctx context.Context, task *model.Task, totalTo
 	modelRatio, hasRatioSetting, _ := ratio_setting.GetModelRatio(modelName)
 	// 只有配置了倍率(非固定价格)时才按 token 重新计费
 	if !hasRatioSetting || modelRatio <= 0 {
-		return
+		return RecalculateTaskQuota(ctx, task, taskSubmitQuota(task), fmt.Sprintf("任务完成按预扣额度结算：模型 %s 未配置 token 倍率", modelName))
 	}
 
 	// 获取用户和组的倍率信息
@@ -270,7 +381,7 @@ func RecalculateTaskQuotaByTokens(ctx context.Context, task *model.Task, totalTo
 		}
 	}
 	if group == "" {
-		return
+		return RecalculateTaskQuota(ctx, task, taskSubmitQuota(task), "任务完成按预扣额度结算：用户分组为空")
 	}
 
 	groupRatio := ratio_setting.GetGroupRatio(group)
@@ -297,5 +408,5 @@ func RecalculateTaskQuotaByTokens(ctx context.Context, task *model.Task, totalTo
 	actualQuota := int(float64(totalTokens) * modelRatio * finalGroupRatio * otherMultiplier)
 
 	reason := fmt.Sprintf("token重算：tokens=%d, modelRatio=%.2f, groupRatio=%.2f, otherMultiplier=%.4f", totalTokens, modelRatio, finalGroupRatio, otherMultiplier)
-	RecalculateTaskQuota(ctx, task, actualQuota, reason)
+	return RecalculateTaskQuota(ctx, task, actualQuota, reason)
 }

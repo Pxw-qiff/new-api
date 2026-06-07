@@ -941,6 +941,10 @@ func ManageUser(c *gin.Context) {
 		}
 		user.Role = common.RoleCommonUser
 	case "add_quota":
+		if service.IsChuamgweiCreditEnabled() {
+			common.ApiErrorMsg(c, "已接入统一积分账本，管理员额度调整已禁用")
+			return
+		}
 		adminName := c.GetString("username")
 		adminId := c.GetInt("id")
 		adminInfo := map[string]interface{}{
@@ -1104,6 +1108,9 @@ func getTopUpLock(userID int) *topUpTryLock {
 }
 
 func TopUp(c *gin.Context) {
+	if rejectExternalCreditTopUp(c) {
+		return
+	}
 	if !operation_setting.IsPaymentComplianceConfirmed() {
 		common.ApiErrorI18n(c, i18n.MsgPaymentComplianceRequired)
 		return

@@ -107,6 +107,9 @@ func UpdatePendingTopUpStatus(tradeNo string, expectedPaymentProvider string, ta
 }
 
 func Recharge(referenceId string, customerId string, callerIp string) (err error) {
+	if common.IsChuamgweiCreditEnabled() {
+		return errors.New("已接入统一积分账本，请在主站充值")
+	}
 	if referenceId == "" {
 		return errors.New("未提供支付单号")
 	}
@@ -318,6 +321,9 @@ func SearchAllTopUps(keyword string, pageInfo *common.PageInfo) (topups []*TopUp
 
 // ManualCompleteTopUp 管理员手动完成订单并给用户充值
 func ManualCompleteTopUp(tradeNo string, callerIp string) error {
+	if common.IsChuamgweiCreditEnabled() {
+		return errors.New("已接入统一积分账本，请在主站充值")
+	}
 	if tradeNo == "" {
 		return errors.New("未提供订单号")
 	}
@@ -390,6 +396,9 @@ func ManualCompleteTopUp(tradeNo string, callerIp string) error {
 	return nil
 }
 func RechargeCreem(referenceId string, customerEmail string, customerName string, callerIp string) (err error) {
+	if common.IsChuamgweiCreditEnabled() {
+		return errors.New("已接入统一积分账本，请在主站充值")
+	}
 	if referenceId == "" {
 		return errors.New("未提供支付单号")
 	}
@@ -465,6 +474,9 @@ func RechargeCreem(referenceId string, customerEmail string, customerName string
 }
 
 func RechargeWaffo(tradeNo string, callerIp string) (err error) {
+	if common.IsChuamgweiCreditEnabled() {
+		return errors.New("已接入统一积分账本，请在主站充值")
+	}
 	if tradeNo == "" {
 		return errors.New("未提供支付单号")
 	}
@@ -528,6 +540,9 @@ func RechargeWaffo(tradeNo string, callerIp string) (err error) {
 }
 
 func RechargeWaffoPancake(tradeNo string) (err error) {
+	if common.IsChuamgweiCreditEnabled() {
+		return errors.New("已接入统一积分账本，请在主站充值")
+	}
 	if tradeNo == "" {
 		return errors.New("未提供支付单号")
 	}

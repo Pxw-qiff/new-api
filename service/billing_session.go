@@ -45,7 +45,7 @@ func (s *BillingSession) Settle(actualQuota int) error {
 		return nil
 	}
 	delta := actualQuota - s.preConsumedQuota
-	if delta == 0 {
+	if delta == 0 && !s.requiresSettleOnZeroDelta() {
 		s.settled = true
 		return nil
 	}
@@ -58,7 +58,7 @@ func (s *BillingSession) Settle(actualQuota int) error {
 	}
 	// 2) 调整令牌额度
 	var tokenErr error
-	if !s.relayInfo.IsPlayground {
+	if delta != 0 && !s.relayInfo.IsPlayground {
 		if delta > 0 {
 			tokenErr = model.DecreaseTokenQuota(s.relayInfo.TokenId, s.relayInfo.TokenKey, delta)
 		} else {
@@ -140,6 +140,13 @@ func (s *BillingSession) needsRefundLocked() bool {
 	// 订阅可能在 tokenConsumed=0 时仍预扣了额度
 	if sub, ok := s.funding.(*SubscriptionFunding); ok && sub.preConsumed > 0 {
 		return true
+	}
+	return false
+}
+
+func (s *BillingSession) requiresSettleOnZeroDelta() bool {
+	if funding, ok := s.funding.(interface{ RequiresSettleOnZeroDelta() bool }); ok {
+		return funding.RequiresSettleOnZeroDelta()
 	}
 	return false
 }
@@ -232,6 +239,9 @@ func (s *BillingSession) preConsume(c *gin.Context, quota int) *types.NewAPIErro
 func (s *BillingSession) reserveFunding(delta int) error {
 	switch funding := s.funding.(type) {
 	case *WalletFunding:
+		if funding.UsesExternalCredit() {
+			return types.NewError(fmt.Errorf("外部积分账本暂不支持追加预扣"), types.ErrorCodeUpdateDataError, types.ErrOptionWithSkipRetry())
+		}
 		if err := model.DecreaseUserQuota(funding.userId, delta, false); err != nil {
 			return types.NewError(err, types.ErrorCodeUpdateDataError, types.ErrOptionWithSkipRetry())
 		}
@@ -256,6 +266,10 @@ func (s *BillingSession) reserveFunding(delta int) error {
 func (s *BillingSession) rollbackFundingReserve(delta int) {
 	switch funding := s.funding.(type) {
 	case *WalletFunding:
+		if funding.UsesExternalCredit() {
+			common.SysLog("skip local rollback for external credit reserve")
+			return
+		}
 		if err := model.IncreaseUserQuota(funding.userId, delta, false); err != nil {
 			common.SysLog("error rolling back wallet funding reserve: " + err.Error())
 		} else {
@@ -302,6 +316,9 @@ func (s *BillingSession) shouldTrust(c *gin.Context) bool {
 
 	switch s.funding.Source() {
 	case BillingSourceWallet:
+		if wallet, ok := s.funding.(*WalletFunding); ok && wallet.UsesExternalCredit() {
+			return false
+		}
 		return s.relayInfo.UserQuota > trustQuota
 	case BillingSourceSubscription:
 		// 订阅不能启用信任旁路。原因：
@@ -319,6 +336,14 @@ func (s *BillingSession) syncRelayInfo() {
 	info := s.relayInfo
 	info.FinalPreConsumedQuota = s.preConsumedQuota
 	info.BillingSource = s.funding.Source()
+
+	if wallet, ok := s.funding.(*WalletFunding); ok && wallet.UsesExternalCredit() {
+		info.ChuamgweiUserUuid = wallet.userUuid
+		info.CreditBizOrderNo = wallet.bizOrderNo
+	} else {
+		info.ChuamgweiUserUuid = ""
+		info.CreditBizOrderNo = ""
+	}
 
 	if sub, ok := s.funding.(*SubscriptionFunding); ok {
 		info.SubscriptionId = sub.subscriptionId
@@ -348,7 +373,21 @@ func NewBillingSession(c *gin.Context, relayInfo *relaycommon.RelayInfo, preCons
 
 	// 钱包路径需要先检查用户额度
 	tryWallet := func() (*BillingSession, *types.NewAPIError) {
-		userQuota, err := model.GetUserQuota(relayInfo.UserId, false)
+		userQuota := 0
+		userUuid := ""
+		var err error
+		if IsChuamgweiCreditEnabled() {
+			userUuid, err = model.GetChuamgweiUserUuid(relayInfo.UserId)
+			if err != nil {
+				return nil, types.NewErrorWithStatusCode(err, types.ErrorCodeInsufficientUserQuota, http.StatusForbidden, types.ErrOptionWithSkipRetry(), types.ErrOptionWithNoRecordErrorLog())
+			}
+			if relayInfo.RequestId == "" {
+				return nil, types.NewErrorWithStatusCode(fmt.Errorf("new-api 请求ID为空，无法创建积分计费单"), types.ErrorCodeInvalidRequest, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
+			}
+			userQuota, err = GetChuamgweiCreditAvailableQuota(userUuid)
+		} else {
+			userQuota, err = model.GetUserQuota(relayInfo.UserId, false)
+		}
 		if err != nil {
 			return nil, types.NewError(err, types.ErrorCodeQueryDataError, types.ErrOptionWithSkipRetry())
 		}
@@ -368,7 +407,13 @@ func NewBillingSession(c *gin.Context, relayInfo *relaycommon.RelayInfo, preCons
 
 		session := &BillingSession{
 			relayInfo: relayInfo,
-			funding:   &WalletFunding{userId: relayInfo.UserId},
+			funding: &WalletFunding{
+				userId:     relayInfo.UserId,
+				userUuid:   userUuid,
+				bizOrderNo: relayInfo.RequestId,
+				modelName:  relayInfo.OriginModelName,
+				tokenId:    relayInfo.TokenId,
+			},
 		}
 		if apiErr := session.preConsume(c, preConsumedQuota); apiErr != nil {
 			return nil, apiErr

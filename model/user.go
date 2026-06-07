@@ -22,48 +22,50 @@ const UserNameMaxLength = 20
 // User if you add sensitive fields, don't forget to clean them in setupLogin function.
 // Otherwise, the sensitive information will be saved on local storage in plain text!
 type User struct {
-	Id               int            `json:"id"`
-	Username         string         `json:"username" gorm:"unique;index" validate:"max=20"`
-	Password         string         `json:"password" gorm:"not null;" validate:"min=8,max=20"`
-	OriginalPassword string         `json:"original_password" gorm:"-:all"` // this field is only for Password change verification, don't save it to database!
-	DisplayName      string         `json:"display_name" gorm:"index" validate:"max=20"`
-	Role             int            `json:"role" gorm:"type:int;default:1"`   // admin, common
-	Status           int            `json:"status" gorm:"type:int;default:1"` // enabled, disabled
-	Email            string         `json:"email" gorm:"index" validate:"max=50"`
-	GitHubId         string         `json:"github_id" gorm:"column:github_id;index"`
-	DiscordId        string         `json:"discord_id" gorm:"column:discord_id;index"`
-	OidcId           string         `json:"oidc_id" gorm:"column:oidc_id;index"`
-	WeChatId         string         `json:"wechat_id" gorm:"column:wechat_id;index"`
-	TelegramId       string         `json:"telegram_id" gorm:"column:telegram_id;index"`
-	VerificationCode string         `json:"verification_code" gorm:"-:all"`                         // this field is only for Email verification, don't save it to database!
-	AccessToken      *string        `json:"-" gorm:"type:char(32);column:access_token;uniqueIndex"` // this token is for system management
-	Quota            int            `json:"quota" gorm:"type:int;default:0"`
-	UsedQuota        int            `json:"used_quota" gorm:"type:int;default:0;column:used_quota"` // used quota
-	RequestCount     int            `json:"request_count" gorm:"type:int;default:0;"`               // request number
-	Group            string         `json:"group" gorm:"type:varchar(64);default:'default'"`
-	AffCode          string         `json:"aff_code" gorm:"type:varchar(32);column:aff_code;uniqueIndex"`
-	AffCount         int            `json:"aff_count" gorm:"type:int;default:0;column:aff_count"`
-	AffQuota         int            `json:"aff_quota" gorm:"type:int;default:0;column:aff_quota"`           // 邀请剩余额度
-	AffHistoryQuota  int            `json:"aff_history_quota" gorm:"type:int;default:0;column:aff_history"` // 邀请历史额度
-	InviterId        int            `json:"inviter_id" gorm:"type:int;column:inviter_id;index"`
-	DeletedAt        gorm.DeletedAt `gorm:"index"`
-	LinuxDOId        string         `json:"linux_do_id" gorm:"column:linux_do_id;index"`
-	Setting          string         `json:"setting" gorm:"type:text;column:setting"`
-	Remark           string         `json:"remark,omitempty" gorm:"type:varchar(255)" validate:"max=255"`
-	StripeCustomer   string         `json:"stripe_customer" gorm:"type:varchar(64);column:stripe_customer;index"`
-	CreatedAt        int64          `json:"created_at" gorm:"autoCreateTime;column:created_at"`
-	LastLoginAt      int64          `json:"last_login_at" gorm:"default:0;column:last_login_at"`
+	Id                int            `json:"id"`
+	Username          string         `json:"username" gorm:"unique;index" validate:"max=20"`
+	Password          string         `json:"password" gorm:"not null;" validate:"min=8,max=20"`
+	OriginalPassword  string         `json:"original_password" gorm:"-:all"` // this field is only for Password change verification, don't save it to database!
+	DisplayName       string         `json:"display_name" gorm:"index" validate:"max=20"`
+	Role              int            `json:"role" gorm:"type:int;default:1"`   // admin, common
+	Status            int            `json:"status" gorm:"type:int;default:1"` // enabled, disabled
+	Email             string         `json:"email" gorm:"index" validate:"max=50"`
+	GitHubId          string         `json:"github_id" gorm:"column:github_id;index"`
+	DiscordId         string         `json:"discord_id" gorm:"column:discord_id;index"`
+	OidcId            string         `json:"oidc_id" gorm:"column:oidc_id;index"`
+	WeChatId          string         `json:"wechat_id" gorm:"column:wechat_id;index"`
+	TelegramId        string         `json:"telegram_id" gorm:"column:telegram_id;index"`
+	ChuamgweiUserUuid string         `json:"chuamgwei_user_uuid" gorm:"type:varchar(64);column:chuamgwei_user_uuid;index" validate:"max=64"`
+	VerificationCode  string         `json:"verification_code" gorm:"-:all"`                         // this field is only for Email verification, don't save it to database!
+	AccessToken       *string        `json:"-" gorm:"type:char(32);column:access_token;uniqueIndex"` // this token is for system management
+	Quota             int            `json:"quota" gorm:"type:int;default:0"`
+	UsedQuota         int            `json:"used_quota" gorm:"type:int;default:0;column:used_quota"` // used quota
+	RequestCount      int            `json:"request_count" gorm:"type:int;default:0;"`               // request number
+	Group             string         `json:"group" gorm:"type:varchar(64);default:'default'"`
+	AffCode           string         `json:"aff_code" gorm:"type:varchar(32);column:aff_code;uniqueIndex"`
+	AffCount          int            `json:"aff_count" gorm:"type:int;default:0;column:aff_count"`
+	AffQuota          int            `json:"aff_quota" gorm:"type:int;default:0;column:aff_quota"`           // 邀请剩余额度
+	AffHistoryQuota   int            `json:"aff_history_quota" gorm:"type:int;default:0;column:aff_history"` // 邀请历史额度
+	InviterId         int            `json:"inviter_id" gorm:"type:int;column:inviter_id;index"`
+	DeletedAt         gorm.DeletedAt `gorm:"index"`
+	LinuxDOId         string         `json:"linux_do_id" gorm:"column:linux_do_id;index"`
+	Setting           string         `json:"setting" gorm:"type:text;column:setting"`
+	Remark            string         `json:"remark,omitempty" gorm:"type:varchar(255)" validate:"max=255"`
+	StripeCustomer    string         `json:"stripe_customer" gorm:"type:varchar(64);column:stripe_customer;index"`
+	CreatedAt         int64          `json:"created_at" gorm:"autoCreateTime;column:created_at"`
+	LastLoginAt       int64          `json:"last_login_at" gorm:"default:0;column:last_login_at"`
 }
 
 func (user *User) ToBaseUser() *UserBase {
 	cache := &UserBase{
-		Id:       user.Id,
-		Group:    user.Group,
-		Quota:    user.Quota,
-		Status:   user.Status,
-		Username: user.Username,
-		Setting:  user.Setting,
-		Email:    user.Email,
+		Id:                user.Id,
+		Group:             user.Group,
+		Quota:             user.Quota,
+		Status:            user.Status,
+		Username:          user.Username,
+		Setting:           user.Setting,
+		Email:             user.Email,
+		ChuamgweiUserUuid: user.ChuamgweiUserUuid,
 	}
 	return cache
 }
@@ -303,6 +305,123 @@ func GetUserById(id int, selectAll bool) (*User, error) {
 	return &user, err
 }
 
+func GetChuamgweiUserUuid(userId int) (string, error) {
+	if userId == 0 {
+		return "", errors.New("id 为空！")
+	}
+	var user User
+	if err := DB.Select("chuamgwei_user_uuid").First(&user, "id = ?", userId).Error; err != nil {
+		return "", err
+	}
+	userUuid := strings.TrimSpace(user.ChuamgweiUserUuid)
+	if userUuid == "" {
+		return "", fmt.Errorf("new-api 用户 %d 未绑定 chuamgwei 用户UUID", userId)
+	}
+	return userUuid, nil
+}
+
+func BindChuamgweiUserUuid(userId int, userUuid string) error {
+	if userId == 0 {
+		return errors.New("id 为空！")
+	}
+	normalizedUserUuid := strings.TrimSpace(userUuid)
+	if normalizedUserUuid == "" {
+		return errors.New("chuamgwei 用户UUID为空")
+	}
+	if err := DB.Model(&User{}).Where("id = ?", userId).Update("chuamgwei_user_uuid", normalizedUserUuid).Error; err != nil {
+		return err
+	}
+	return invalidateUserCache(userId)
+}
+
+// GetUserByChuamgweiUserUuid 按公共 users.user_uuid 查询 new-api 影子用户。
+func GetUserByChuamgweiUserUuid(userUuid string) (*User, error) {
+	normalizedUserUuid := strings.TrimSpace(userUuid)
+	if normalizedUserUuid == "" {
+		return nil, errors.New("chuamgwei 用户UUID为空")
+	}
+	var user User
+	err := DB.Unscoped().Where("chuamgwei_user_uuid = ?", normalizedUserUuid).First(&user).Error
+	return &user, err
+}
+
+// UpsertChuamgweiShadowUser 幂等创建或更新 Node 用户对应的 new-api 影子用户。
+func UpsertChuamgweiShadowUser(userUuid string, username string, enabled bool) (*User, bool, error) {
+	normalizedUserUuid := strings.TrimSpace(userUuid)
+	if normalizedUserUuid == "" {
+		return nil, false, errors.New("chuamgwei 用户UUID为空")
+	}
+
+	status := common.UserStatusDisabled
+	if enabled {
+		status = common.UserStatusEnabled
+	}
+	displayName := truncateRunes(strings.TrimSpace(username), UserNameMaxLength)
+	if displayName == "" {
+		displayName = "Chuamgwei User"
+	}
+
+	user, err := GetUserByChuamgweiUserUuid(normalizedUserUuid)
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		shadowUser := User{
+			Username:          buildChuamgweiShadowUsername(normalizedUserUuid),
+			Password:          common.GetRandomString(32),
+			DisplayName:       displayName,
+			Role:              common.RoleCommonUser,
+			Status:            status,
+			Group:             "default",
+			ChuamgweiUserUuid: normalizedUserUuid,
+		}
+		if err := shadowUser.Insert(0); err != nil {
+			return nil, false, err
+		}
+		return &shadowUser, true, nil
+	}
+	if err != nil {
+		return nil, false, err
+	}
+
+	updates := map[string]interface{}{
+		"display_name":        displayName,
+		"status":              status,
+		"chuamgwei_user_uuid": normalizedUserUuid,
+		"deleted_at":          nil,
+	}
+	if strings.TrimSpace(user.Group) == "" {
+		updates["group"] = "default"
+	}
+	if err := DB.Unscoped().Model(&User{}).Where("id = ?", user.Id).Updates(updates).Error; err != nil {
+		return nil, false, err
+	}
+	if err := invalidateUserCache(user.Id); err != nil {
+		return nil, false, err
+	}
+	updatedUser, err := GetUserById(user.Id, true)
+	if err != nil {
+		return nil, false, err
+	}
+	return updatedUser, false, nil
+}
+
+func buildChuamgweiShadowUsername(userUuid string) string {
+	cleaned := strings.ReplaceAll(strings.TrimSpace(userUuid), "-", "")
+	if cleaned == "" {
+		cleaned = common.GetRandomString(16)
+	}
+	return "cw_" + truncateRunes(cleaned, UserNameMaxLength-3)
+}
+
+func truncateRunes(value string, maxLength int) string {
+	if maxLength <= 0 {
+		return ""
+	}
+	runes := []rune(value)
+	if len(runes) <= maxLength {
+		return value
+	}
+	return string(runes[:maxLength])
+}
+
 func GetUserIdByAffCode(affCode string) (int, error) {
 	if affCode == "" {
 		return 0, errors.New("affCode 为空！")
@@ -334,12 +453,17 @@ func inviteUser(inviterId int) (err error) {
 		return err
 	}
 	user.AffCount++
-	user.AffQuota += common.QuotaForInviter
-	user.AffHistoryQuota += common.QuotaForInviter
+	if !common.IsChuamgweiCreditEnabled() {
+		user.AffQuota += common.QuotaForInviter
+		user.AffHistoryQuota += common.QuotaForInviter
+	}
 	return DB.Save(user).Error
 }
 
 func (user *User) TransferAffQuotaToQuota(quota int) error {
+	if common.IsChuamgweiCreditEnabled() {
+		return errors.New("已接入统一积分账本，邀请额度转余额已禁用")
+	}
 	// 检查quota是否小于最小额度
 	if float64(quota) < common.QuotaPerUnit {
 		return fmt.Errorf("转移额度最小为%s！", logger.LogQuota(int(common.QuotaPerUnit)))
@@ -384,7 +508,11 @@ func (user *User) Insert(inviterId int) error {
 			return err
 		}
 	}
-	user.Quota = common.QuotaForNewUser
+	if common.IsChuamgweiCreditEnabled() {
+		user.Quota = 0
+	} else {
+		user.Quota = common.QuotaForNewUser
+	}
 	//user.SetAccessToken(common.GetUUID())
 	user.AffCode = common.GetRandomString(4)
 
@@ -415,10 +543,10 @@ func (user *User) Insert(inviterId int) error {
 		}
 	}
 
-	if common.QuotaForNewUser > 0 {
+	if !common.IsChuamgweiCreditEnabled() && common.QuotaForNewUser > 0 {
 		RecordLog(user.Id, LogTypeSystem, fmt.Sprintf("新用户注册赠送 %s", logger.LogQuota(common.QuotaForNewUser)))
 	}
-	if inviterId != 0 && operation_setting.IsPaymentComplianceConfirmed() {
+	if !common.IsChuamgweiCreditEnabled() && inviterId != 0 && operation_setting.IsPaymentComplianceConfirmed() {
 		if common.QuotaForInvitee > 0 {
 			_ = IncreaseUserQuota(user.Id, common.QuotaForInvitee, true)
 			RecordLog(user.Id, LogTypeSystem, fmt.Sprintf("使用邀请码赠送 %s", logger.LogQuota(common.QuotaForInvitee)))
@@ -443,7 +571,11 @@ func (user *User) InsertWithTx(tx *gorm.DB, inviterId int) error {
 			return err
 		}
 	}
-	user.Quota = common.QuotaForNewUser
+	if common.IsChuamgweiCreditEnabled() {
+		user.Quota = 0
+	} else {
+		user.Quota = common.QuotaForNewUser
+	}
 	user.AffCode = common.GetRandomString(4)
 
 	// 初始化用户设置
@@ -476,10 +608,10 @@ func (user *User) FinalizeOAuthUserCreation(inviterId int) {
 		}
 	}
 
-	if common.QuotaForNewUser > 0 {
+	if !common.IsChuamgweiCreditEnabled() && common.QuotaForNewUser > 0 {
 		RecordLog(user.Id, LogTypeSystem, fmt.Sprintf("新用户注册赠送 %s", logger.LogQuota(common.QuotaForNewUser)))
 	}
-	if inviterId != 0 && operation_setting.IsPaymentComplianceConfirmed() {
+	if !common.IsChuamgweiCreditEnabled() && inviterId != 0 && operation_setting.IsPaymentComplianceConfirmed() {
 		if common.QuotaForInvitee > 0 {
 			_ = IncreaseUserQuota(user.Id, common.QuotaForInvitee, true)
 			RecordLog(user.Id, LogTypeSystem, fmt.Sprintf("使用邀请码赠送 %s", logger.LogQuota(common.QuotaForInvitee)))

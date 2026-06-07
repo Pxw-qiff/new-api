@@ -571,8 +571,13 @@ func RelayTask(c *gin.Context) {
 
 	// ── 成功：结算 + 日志 + 插入任务 ──
 	if taskErr == nil {
-		if settleErr := service.SettleBilling(c, relayInfo, result.Quota); settleErr != nil {
-			common.SysError("settle task billing error: " + settleErr.Error())
+		usesExternalTaskCredit := service.IsChuamgweiCreditEnabled() && relayInfo.BillingSource == service.BillingSourceWallet
+		if !usesExternalTaskCredit {
+			if settleErr := service.SettleBilling(c, relayInfo, result.Quota); settleErr != nil {
+				common.SysError("settle task billing error: " + settleErr.Error())
+			}
+		} else {
+			logger.LogInfo(c, fmt.Sprintf("异步任务 %s 已预扣外部积分，等待轮询终态结算", relayInfo.RequestId))
 		}
 		service.LogTaskConsumption(c, relayInfo)
 
@@ -582,6 +587,9 @@ func RelayTask(c *gin.Context) {
 		task.PrivateData.BillingSource = relayInfo.BillingSource
 		task.PrivateData.SubscriptionId = relayInfo.SubscriptionId
 		task.PrivateData.TokenId = relayInfo.TokenId
+		task.PrivateData.ChuamgweiUserUuid = relayInfo.ChuamgweiUserUuid
+		task.PrivateData.CreditBizOrderNo = relayInfo.CreditBizOrderNo
+		task.PrivateData.SubmitQuota = result.Quota
 		task.PrivateData.BillingContext = &model.TaskBillingContext{
 			ModelPrice:      relayInfo.PriceData.ModelPrice,
 			GroupRatio:      relayInfo.PriceData.GroupRatioInfo.GroupRatio,

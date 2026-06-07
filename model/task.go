@@ -41,6 +41,13 @@ const (
 	TaskStatusUnknown               = "UNKNOWN"
 )
 
+const (
+	TaskBillingStatusPendingSettle = "PENDING_SETTLE"
+	TaskBillingStatusSettled       = "SETTLED"
+	TaskBillingStatusPendingRefund = "PENDING_REFUND"
+	TaskBillingStatusRefunded      = "REFUNDED"
+)
+
 type Task struct {
 	ID         int64                 `json:"id" gorm:"primary_key;AUTO_INCREMENT"`
 	CreatedAt  int64                 `json:"created_at" gorm:"index"`
@@ -101,10 +108,17 @@ type TaskPrivateData struct {
 	UpstreamTaskID string `json:"upstream_task_id,omitempty"` // 上游真实 task ID
 	ResultURL      string `json:"result_url,omitempty"`       // 任务成功后的结果 URL（视频地址等）
 	// 计费上下文：用于异步退款/差额结算（轮询阶段读取）
-	BillingSource  string              `json:"billing_source,omitempty"`  // "wallet" 或 "subscription"
-	SubscriptionId int                 `json:"subscription_id,omitempty"` // 订阅 ID，用于订阅退款
-	TokenId        int                 `json:"token_id,omitempty"`        // 令牌 ID，用于令牌额度退款
-	BillingContext *TaskBillingContext `json:"billing_context,omitempty"` // 计费参数快照（用于轮询阶段重新计算）
+	BillingSource      string              `json:"billing_source,omitempty"`       // "wallet" 或 "subscription"
+	SubscriptionId     int                 `json:"subscription_id,omitempty"`      // 订阅 ID，用于订阅退款
+	TokenId            int                 `json:"token_id,omitempty"`             // 令牌 ID，用于令牌额度退款
+	ChuamgweiUserUuid  string              `json:"chuamgwei_user_uuid,omitempty"`  // chuamgwei 积分用户UUID
+	CreditBizOrderNo   string              `json:"credit_biz_order_no,omitempty"`  // chuamgwei 积分业务单号
+	SubmitQuota        int                 `json:"submit_quota,omitempty"`         // 提交阶段适配器调整后的额度
+	BillingStatus      string              `json:"billing_status,omitempty"`       // 内部账务状态
+	BillingError       string              `json:"billing_error,omitempty"`        // 最近一次账务失败原因
+	BillingRetryQuota  int                 `json:"billing_retry_quota,omitempty"`  // 终态账务补偿重试额度
+	BillingRetryReason string              `json:"billing_retry_reason,omitempty"` // 终态账务补偿重试原因
+	BillingContext     *TaskBillingContext `json:"billing_context,omitempty"`      // 计费参数快照（用于轮询阶段重新计算）
 }
 
 // TaskBillingContext 记录任务提交时的计费参数，以便轮询阶段可以重新计算额度。
@@ -306,8 +320,15 @@ func GetTimedOutUnfinishedTasks(cutoffUnix int64, limit int) []*Task {
 func GetAllUnFinishSyncTasks(limit int) []*Task {
 	var tasks []*Task
 	var err error
-	// get all tasks progress is not 100%
-	err = DB.Where("progress != ?", "100%").Where("status != ?", TaskStatusFailure).Where("status != ?", TaskStatusSuccess).Limit(limit).Order("id").Find(&tasks).Error
+	// get all unfinished tasks and terminal tasks whose external billing is still pending
+	err = DB.Where(
+		"(progress != ? AND status != ? AND status != ?) OR private_data LIKE ? OR private_data LIKE ?",
+		"100%",
+		TaskStatusFailure,
+		TaskStatusSuccess,
+		"%"+TaskBillingStatusPendingSettle+"%",
+		"%"+TaskBillingStatusPendingRefund+"%",
+	).Limit(limit).Order("id").Find(&tasks).Error
 	if err != nil {
 		return nil
 	}
@@ -399,6 +420,10 @@ func (Task *Task) Update() error {
 	var err error
 	err = DB.Save(Task).Error
 	return err
+}
+
+func (Task *Task) UpdateBillingFields() error {
+	return DB.Model(Task).Select("private_data", "quota").Updates(Task).Error
 }
 
 // UpdateWithStatus performs a conditional UPDATE guarded by fromStatus (CAS).

@@ -1,6 +1,7 @@
 package service
 
 import (
+	"fmt"
 	"time"
 
 	"github.com/QuantumNous/new-api/model"
@@ -27,14 +28,33 @@ type FundingSource interface {
 // ---------------------------------------------------------------------------
 
 type WalletFunding struct {
-	userId   int
-	consumed int // 实际预扣的用户额度
+	userId     int
+	userUuid   string
+	bizOrderNo string
+	modelName  string
+	tokenId    int
+	consumed   int // 实际预扣的用户额度
 }
 
 func (w *WalletFunding) Source() string { return BillingSourceWallet }
 
+func (w *WalletFunding) UsesExternalCredit() bool {
+	return IsChuamgweiCreditEnabled() && w.userUuid != "" && w.bizOrderNo != ""
+}
+
+func (w *WalletFunding) RequiresSettleOnZeroDelta() bool {
+	return w.UsesExternalCredit()
+}
+
 func (w *WalletFunding) PreConsume(amount int) error {
 	if amount <= 0 {
+		return nil
+	}
+	if w.UsesExternalCredit() {
+		if err := PreConsumeChuamgweiCredit(w.userUuid, w.bizOrderNo, amount, w.remark("new-api 请求预扣积分")); err != nil {
+			return err
+		}
+		w.consumed = amount
 		return nil
 	}
 	if err := model.DecreaseUserQuota(w.userId, amount, false); err != nil {
@@ -45,6 +65,13 @@ func (w *WalletFunding) PreConsume(amount int) error {
 }
 
 func (w *WalletFunding) Settle(delta int) error {
+	if w.UsesExternalCredit() {
+		actualQuota := w.consumed + delta
+		if actualQuota < 0 {
+			actualQuota = 0
+		}
+		return SettleChuamgweiCredit(w.userUuid, w.bizOrderNo, actualQuota, w.remark("new-api 请求完成，按实际用量结算"))
+	}
 	if delta == 0 {
 		return nil
 	}
@@ -58,9 +85,16 @@ func (w *WalletFunding) Refund() error {
 	if w.consumed <= 0 {
 		return nil
 	}
+	if w.UsesExternalCredit() {
+		return RefundChuamgweiCredit(w.userUuid, w.bizOrderNo, w.remark("new-api 请求失败，退回预扣积分"))
+	}
 	// IncreaseUserQuota 是 quota += N 的非幂等操作，不能重试，否则会多退额度。
 	// 订阅的 RefundSubscriptionPreConsume 有 requestId 幂等保护所以可以重试。
 	return model.IncreaseUserQuota(w.userId, w.consumed, false)
+}
+
+func (w *WalletFunding) remark(action string) string {
+	return fmt.Sprintf("%s，model=%s，tokenId=%d，requestId=%s", action, w.modelName, w.tokenId, w.bizOrderNo)
 }
 
 // ---------------------------------------------------------------------------
