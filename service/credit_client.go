@@ -179,10 +179,21 @@ func creditPointsToQuota(points decimal.Decimal) int {
 }
 
 func chuamgweiCreditPointsPerQuota() decimal.Decimal {
-	rawValue := strings.TrimSpace(common.GetEnvOrDefaultString("CHUAMGWEI_CREDIT_POINTS_PER_QUOTA", "1"))
+	rawValue := strings.TrimSpace(common.GetEnvOrDefaultString("CHUAMGWEI_CREDIT_POINTS_PER_QUOTA", ""))
+	if rawValue == "" {
+		return defaultChuamgweiCreditPointsPerQuota()
+	}
 	pointsPerQuota, err := decimal.NewFromString(rawValue)
 	if err != nil || pointsPerQuota.LessThanOrEqual(decimal.Zero) {
-		return decimal.NewFromInt(1)
+		return defaultChuamgweiCreditPointsPerQuota()
 	}
 	return pointsPerQuota
+}
+
+func defaultChuamgweiCreditPointsPerQuota() decimal.Decimal {
+	quotaPerUnit := decimal.NewFromFloat(common.QuotaPerUnit)
+	if quotaPerUnit.LessThanOrEqual(decimal.Zero) {
+		return decimal.NewFromInt(1)
+	}
+	return decimal.NewFromInt(1).Div(quotaPerUnit)
 }
