@@ -38,6 +38,13 @@ func PreConsumeQuota(c *gin.Context, preConsumedQuota int, relayInfo *relaycommo
 	if IsChuamgweiCreditEnabled() {
 		return PreConsumeBilling(c, preConsumedQuota, relayInfo)
 	}
+	userUuid, err := model.GetOptionalChuamgweiUserUuid(relayInfo.UserId)
+	if err != nil {
+		return types.NewError(err, types.ErrorCodeQueryDataError, types.ErrOptionWithSkipRetry())
+	}
+	if userUuid != "" {
+		return newChuamgweiCreditDisabledError(relayInfo.UserId)
+	}
 	userQuota, err := model.GetUserQuota(relayInfo.UserId, false)
 	if err != nil {
 		return types.NewError(err, types.ErrorCodeQueryDataError, types.ErrOptionWithSkipRetry())

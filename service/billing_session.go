@@ -363,6 +363,16 @@ func (s *BillingSession) syncRelayInfo() {
 // NewBillingSession 工厂 — 根据计费偏好创建会话并处理回退
 // ---------------------------------------------------------------------------
 
+// newChuamgweiCreditDisabledError 阻止影子用户回退到 new-api 本地额度账本。
+func newChuamgweiCreditDisabledError(userId int) *types.NewAPIError {
+	return types.NewErrorWithStatusCode(
+		fmt.Errorf("new-api 用户 %d 已绑定 chuamgwei 用户UUID，但统一积分未启用，拒绝使用 new-api 本地余额校验", userId),
+		types.ErrorCodeUpdateDataError,
+		http.StatusInternalServerError,
+		types.ErrOptionWithSkipRetry(),
+	)
+}
+
 // NewBillingSession 根据用户计费偏好创建 BillingSession，处理 subscription_first / wallet_first 的回退。
 func NewBillingSession(c *gin.Context, relayInfo *relaycommon.RelayInfo, preConsumedQuota int) (*BillingSession, *types.NewAPIError) {
 	if relayInfo == nil {
@@ -375,31 +385,51 @@ func NewBillingSession(c *gin.Context, relayInfo *relaycommon.RelayInfo, preCons
 	tryWallet := func() (*BillingSession, *types.NewAPIError) {
 		userQuota := 0
 		userUuid := ""
-		var err error
+		boundUserUuid, err := model.GetOptionalChuamgweiUserUuid(relayInfo.UserId)
+		if err != nil {
+			return nil, types.NewError(err, types.ErrorCodeQueryDataError, types.ErrOptionWithSkipRetry())
+		}
 		if IsChuamgweiCreditEnabled() {
-			userUuid, err = model.GetChuamgweiUserUuid(relayInfo.UserId)
-			if err != nil {
-				return nil, types.NewErrorWithStatusCode(err, types.ErrorCodeInsufficientUserQuota, http.StatusForbidden, types.ErrOptionWithSkipRetry(), types.ErrOptionWithNoRecordErrorLog())
+			if boundUserUuid == "" {
+				return nil, types.NewErrorWithStatusCode(
+					fmt.Errorf("new-api 用户 %d 未绑定 chuamgwei 用户UUID", relayInfo.UserId),
+					types.ErrorCodeInsufficientUserQuota,
+					http.StatusForbidden,
+					types.ErrOptionWithSkipRetry(),
+					types.ErrOptionWithNoRecordErrorLog(),
+				)
 			}
 			if relayInfo.RequestId == "" {
 				return nil, types.NewErrorWithStatusCode(fmt.Errorf("new-api 请求ID为空，无法创建积分计费单"), types.ErrorCodeInvalidRequest, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
 			}
+			userUuid = boundUserUuid
 			userQuota, err = GetChuamgweiCreditAvailableQuota(userUuid)
 		} else {
+			if boundUserUuid != "" {
+				return nil, newChuamgweiCreditDisabledError(relayInfo.UserId)
+			}
 			userQuota, err = model.GetUserQuota(relayInfo.UserId, false)
 		}
 		if err != nil {
 			return nil, types.NewError(err, types.ErrorCodeQueryDataError, types.ErrOptionWithSkipRetry())
 		}
 		if userQuota <= 0 {
+			message := "用户额度不足"
+			if userUuid != "" {
+				message = "统一积分不足"
+			}
 			return nil, types.NewErrorWithStatusCode(
-				fmt.Errorf("用户额度不足, 剩余额度: %s", logger.FormatQuota(userQuota)),
+				fmt.Errorf("%s, 剩余额度: %s", message, logger.FormatQuota(userQuota)),
 				types.ErrorCodeInsufficientUserQuota, http.StatusForbidden,
 				types.ErrOptionWithSkipRetry(), types.ErrOptionWithNoRecordErrorLog())
 		}
 		if userQuota-preConsumedQuota < 0 {
+			message := "预扣费额度失败"
+			if userUuid != "" {
+				message = "统一积分预扣失败"
+			}
 			return nil, types.NewErrorWithStatusCode(
-				fmt.Errorf("预扣费额度失败, 用户剩余额度: %s", logger.FormatQuota(userQuota)),
+				fmt.Errorf("%s, 用户剩余额度: %s", message, logger.FormatQuota(userQuota)),
 				types.ErrorCodeInsufficientUserQuota, http.StatusForbidden,
 				types.ErrOptionWithSkipRetry(), types.ErrOptionWithNoRecordErrorLog())
 		}

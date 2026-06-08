@@ -320,6 +320,18 @@ func GetChuamgweiUserUuid(userId int) (string, error) {
 	return userUuid, nil
 }
 
+// GetOptionalChuamgweiUserUuid 查询用户是否绑定 chuamgwei 用户UUID，未绑定时返回空字符串。
+func GetOptionalChuamgweiUserUuid(userId int) (string, error) {
+	if userId == 0 {
+		return "", errors.New("id 为空！")
+	}
+	var user User
+	if err := DB.Select("chuamgwei_user_uuid").First(&user, "id = ?", userId).Error; err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(user.ChuamgweiUserUuid), nil
+}
+
 func BindChuamgweiUserUuid(userId int, userUuid string) error {
 	if userId == 0 {
 		return errors.New("id 为空！")
