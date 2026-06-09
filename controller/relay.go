@@ -589,6 +589,7 @@ func RelayTask(c *gin.Context) {
 		task.PrivateData.TokenId = relayInfo.TokenId
 		task.PrivateData.ChuamgweiUserUuid = relayInfo.ChuamgweiUserUuid
 		task.PrivateData.CreditBizOrderNo = relayInfo.CreditBizOrderNo
+		task.PrivateData.ChuamgweiCreditChargeRatio = relayInfo.ChuamgweiCreditChargeRatio
 		task.PrivateData.SubmitQuota = result.Quota
 		task.PrivateData.BillingContext = &model.TaskBillingContext{
 			ModelPrice:      relayInfo.PriceData.ModelPrice,

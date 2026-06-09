@@ -39,6 +39,11 @@ type chuamgweiCreditBillingPayload struct {
 type chuamgweiCreditAccount struct {
 	AvailablePoints decimal.Decimal `json:"availablePoints"`
 	FrozenPoints    decimal.Decimal `json:"frozenPoints"`
+	ChargeRatio     decimal.Decimal `json:"chargeRatio"`
+}
+
+type chuamgweiCreditChargeRatio struct {
+	ChargeRatio decimal.Decimal `json:"chargeRatio"`
 }
 
 func IsChuamgweiCreditEnabled() bool {
@@ -46,18 +51,40 @@ func IsChuamgweiCreditEnabled() bool {
 }
 
 func GetChuamgweiCreditAvailableQuota(userUuid string) (int, error) {
+	quota, _, err := GetChuamgweiCreditAvailableQuotaWithRatio(userUuid)
+	return quota, err
+}
+
+func GetChuamgweiCreditAvailableQuotaWithRatio(userUuid string) (int, decimal.Decimal, error) {
 	if strings.TrimSpace(userUuid) == "" {
-		return 0, fmt.Errorf("chuamgwei 用户UUID为空")
+		return 0, decimal.Zero, fmt.Errorf("chuamgwei 用户UUID为空")
 	}
 	var account chuamgweiCreditAccount
 	endpoint := "/internal/credit/balance?userUuid=" + url.QueryEscape(userUuid)
 	if err := callChuamgweiCredit(http.MethodGet, endpoint, nil, &account); err != nil {
-		return 0, err
+		return 0, decimal.Zero, err
 	}
-	return creditPointsToQuota(account.AvailablePoints), nil
+	chargeRatio := normalizeChuamgweiCreditChargeRatio(account.ChargeRatio)
+	return creditPointsToQuota(account.AvailablePoints, chargeRatio), chargeRatio, nil
+}
+
+func GetChuamgweiCreditChargeRatio() (decimal.Decimal, error) {
+	var resp chuamgweiCreditChargeRatio
+	if err := callChuamgweiCredit(http.MethodGet, "/internal/credit/charge-ratio", nil, &resp); err != nil {
+		return decimal.Zero, err
+	}
+	return normalizeChuamgweiCreditChargeRatio(resp.ChargeRatio), nil
 }
 
 func PreConsumeChuamgweiCredit(userUuid, bizOrderNo string, quota int, remark string) error {
+	chargeRatio, err := GetChuamgweiCreditChargeRatio()
+	if err != nil {
+		return err
+	}
+	return PreConsumeChuamgweiCreditWithRatio(userUuid, bizOrderNo, quota, chargeRatio, remark)
+}
+
+func PreConsumeChuamgweiCreditWithRatio(userUuid, bizOrderNo string, quota int, chargeRatio decimal.Decimal, remark string) error {
 	if quota <= 0 {
 		return nil
 	}
@@ -65,13 +92,21 @@ func PreConsumeChuamgweiCredit(userUuid, bizOrderNo string, quota int, remark st
 		UserUuid:        userUuid,
 		BizType:         chuamgweiCreditBizType,
 		BizOrderNo:      bizOrderNo,
-		EstimatedPoints: quotaToCreditPoints(quota).StringFixed(6),
+		EstimatedPoints: quotaToCreditPoints(quota, chargeRatio).StringFixed(6),
 		Remark:          remark,
 	}
 	return callChuamgweiCredit(http.MethodPost, "/internal/credit/pre-consume", payload, nil)
 }
 
 func SettleChuamgweiCredit(userUuid, bizOrderNo string, actualQuota int, remark string) error {
+	chargeRatio, err := GetChuamgweiCreditChargeRatio()
+	if err != nil {
+		return err
+	}
+	return SettleChuamgweiCreditWithRatio(userUuid, bizOrderNo, actualQuota, chargeRatio, remark)
+}
+
+func SettleChuamgweiCreditWithRatio(userUuid, bizOrderNo string, actualQuota int, chargeRatio decimal.Decimal, remark string) error {
 	if actualQuota < 0 {
 		actualQuota = 0
 	}
@@ -79,7 +114,7 @@ func SettleChuamgweiCredit(userUuid, bizOrderNo string, actualQuota int, remark 
 		UserUuid:     userUuid,
 		BizType:      chuamgweiCreditBizType,
 		BizOrderNo:   bizOrderNo,
-		ActualPoints: quotaToCreditPoints(actualQuota).StringFixed(6),
+		ActualPoints: quotaToCreditPoints(actualQuota, chargeRatio).StringFixed(6),
 		Remark:       remark,
 	}
 	return callChuamgweiCredit(http.MethodPost, "/internal/credit/settle", payload, nil)
@@ -164,30 +199,45 @@ func chuamgweiCreditTimeout() time.Duration {
 	return time.Duration(timeoutMs) * time.Millisecond
 }
 
-func quotaToCreditPoints(quota int) decimal.Decimal {
+func quotaToCreditPoints(quota int, chargeRatio decimal.Decimal) decimal.Decimal {
 	if quota <= 0 {
 		return decimal.Zero
 	}
-	return decimal.NewFromInt(int64(quota)).Mul(chuamgweiCreditPointsPerQuota()).Round(6)
+	return decimal.NewFromInt(int64(quota)).Mul(chuamgweiCreditPointsPerQuota(chargeRatio)).Round(6)
 }
 
-func creditPointsToQuota(points decimal.Decimal) int {
+func creditPointsToQuota(points decimal.Decimal, chargeRatio decimal.Decimal) int {
 	if points.LessThanOrEqual(decimal.Zero) {
 		return 0
 	}
-	return int(points.Div(chuamgweiCreditPointsPerQuota()).IntPart())
+	return int(points.Div(chuamgweiCreditPointsPerQuota(chargeRatio)).IntPart())
 }
 
-func chuamgweiCreditPointsPerQuota() decimal.Decimal {
+func chuamgweiCreditPointsPerQuota(chargeRatio decimal.Decimal) decimal.Decimal {
 	rawValue := strings.TrimSpace(common.GetEnvOrDefaultString("CHUAMGWEI_CREDIT_POINTS_PER_QUOTA", ""))
-	if rawValue == "" {
-		return defaultChuamgweiCreditPointsPerQuota()
+	basePointsPerQuota := defaultChuamgweiCreditPointsPerQuota()
+	if rawValue != "" {
+		pointsPerQuota, err := decimal.NewFromString(rawValue)
+		if err == nil && pointsPerQuota.GreaterThan(decimal.Zero) {
+			basePointsPerQuota = pointsPerQuota
+		}
 	}
-	pointsPerQuota, err := decimal.NewFromString(rawValue)
-	if err != nil || pointsPerQuota.LessThanOrEqual(decimal.Zero) {
-		return defaultChuamgweiCreditPointsPerQuota()
+	return basePointsPerQuota.Mul(normalizeChuamgweiCreditChargeRatio(chargeRatio))
+}
+
+func normalizeChuamgweiCreditChargeRatio(chargeRatio decimal.Decimal) decimal.Decimal {
+	if chargeRatio.LessThanOrEqual(decimal.Zero) {
+		return decimal.NewFromInt(1)
 	}
-	return pointsPerQuota
+	return chargeRatio
+}
+
+func chuamgweiCreditChargeRatioFromString(rawValue string) decimal.Decimal {
+	chargeRatio, err := decimal.NewFromString(strings.TrimSpace(rawValue))
+	if err != nil {
+		return decimal.NewFromInt(1)
+	}
+	return normalizeChuamgweiCreditChargeRatio(chargeRatio)
 }
 
 func defaultChuamgweiCreditPointsPerQuota() decimal.Decimal {

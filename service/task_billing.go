@@ -284,7 +284,8 @@ func RecalculateTaskQuota(ctx context.Context, task *model.Task, actualQuota int
 
 	if quotaDelta == 0 {
 		if taskUsesExternalCredit(task) {
-			if err := SettleChuamgweiCredit(task.PrivateData.ChuamgweiUserUuid, task.PrivateData.CreditBizOrderNo, actualQuota, fmt.Sprintf("异步任务完成结算，taskId=%s，%s", task.TaskID, reason)); err != nil {
+			chargeRatio := chuamgweiCreditChargeRatioFromString(task.PrivateData.ChuamgweiCreditChargeRatio)
+			if err := SettleChuamgweiCreditWithRatio(task.PrivateData.ChuamgweiUserUuid, task.PrivateData.CreditBizOrderNo, actualQuota, chargeRatio, fmt.Sprintf("异步任务完成结算，taskId=%s，%s", task.TaskID, reason)); err != nil {
 				logger.LogError(ctx, fmt.Sprintf("外部积分结算失败 task %s: %s", task.TaskID, err.Error()))
 				markTaskBillingPending(ctx, task, model.TaskBillingStatusPendingSettle, actualQuota, reason, err)
 				return err
@@ -308,7 +309,8 @@ func RecalculateTaskQuota(ctx context.Context, task *model.Task, actualQuota int
 
 	// 调整资金来源
 	if taskUsesExternalCredit(task) {
-		if err := SettleChuamgweiCredit(task.PrivateData.ChuamgweiUserUuid, task.PrivateData.CreditBizOrderNo, actualQuota, fmt.Sprintf("异步任务完成结算，taskId=%s，%s", task.TaskID, reason)); err != nil {
+		chargeRatio := chuamgweiCreditChargeRatioFromString(task.PrivateData.ChuamgweiCreditChargeRatio)
+		if err := SettleChuamgweiCreditWithRatio(task.PrivateData.ChuamgweiUserUuid, task.PrivateData.CreditBizOrderNo, actualQuota, chargeRatio, fmt.Sprintf("异步任务完成结算，taskId=%s，%s", task.TaskID, reason)); err != nil {
 			logger.LogError(ctx, fmt.Sprintf("外部积分结算失败 task %s: %s", task.TaskID, err.Error()))
 			markTaskBillingPending(ctx, task, model.TaskBillingStatusPendingSettle, actualQuota, reason, err)
 			return err

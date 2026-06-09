@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/QuantumNous/new-api/model"
+	"github.com/shopspring/decimal"
 )
 
 // ---------------------------------------------------------------------------
@@ -28,12 +29,13 @@ type FundingSource interface {
 // ---------------------------------------------------------------------------
 
 type WalletFunding struct {
-	userId     int
-	userUuid   string
-	bizOrderNo string
-	modelName  string
-	tokenId    int
-	consumed   int // 实际预扣的用户额度
+	userId      int
+	userUuid    string
+	bizOrderNo  string
+	modelName   string
+	tokenId     int
+	consumed    int // 实际预扣的用户额度
+	chargeRatio decimal.Decimal
 }
 
 func (w *WalletFunding) Source() string { return BillingSourceWallet }
@@ -51,7 +53,7 @@ func (w *WalletFunding) PreConsume(amount int) error {
 		return nil
 	}
 	if w.UsesExternalCredit() {
-		if err := PreConsumeChuamgweiCredit(w.userUuid, w.bizOrderNo, amount, w.remark("new-api 请求预扣积分")); err != nil {
+		if err := PreConsumeChuamgweiCreditWithRatio(w.userUuid, w.bizOrderNo, amount, w.chargeRatio, w.remark("new-api 请求预扣积分")); err != nil {
 			return err
 		}
 		w.consumed = amount
@@ -70,7 +72,7 @@ func (w *WalletFunding) Settle(delta int) error {
 		if actualQuota < 0 {
 			actualQuota = 0
 		}
-		return SettleChuamgweiCredit(w.userUuid, w.bizOrderNo, actualQuota, w.remark("new-api 请求完成，按实际用量结算"))
+		return SettleChuamgweiCreditWithRatio(w.userUuid, w.bizOrderNo, actualQuota, w.chargeRatio, w.remark("new-api 请求完成，按实际用量结算"))
 	}
 	if delta == 0 {
 		return nil

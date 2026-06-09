@@ -14,6 +14,7 @@ import (
 
 	"github.com/bytedance/gopkg/util/gopool"
 	"github.com/gin-gonic/gin"
+	"github.com/shopspring/decimal"
 )
 
 // ---------------------------------------------------------------------------
@@ -340,9 +341,11 @@ func (s *BillingSession) syncRelayInfo() {
 	if wallet, ok := s.funding.(*WalletFunding); ok && wallet.UsesExternalCredit() {
 		info.ChuamgweiUserUuid = wallet.userUuid
 		info.CreditBizOrderNo = wallet.bizOrderNo
+		info.ChuamgweiCreditChargeRatio = normalizeChuamgweiCreditChargeRatio(wallet.chargeRatio).String()
 	} else {
 		info.ChuamgweiUserUuid = ""
 		info.CreditBizOrderNo = ""
+		info.ChuamgweiCreditChargeRatio = ""
 	}
 
 	if sub, ok := s.funding.(*SubscriptionFunding); ok {
@@ -385,6 +388,7 @@ func NewBillingSession(c *gin.Context, relayInfo *relaycommon.RelayInfo, preCons
 	tryWallet := func() (*BillingSession, *types.NewAPIError) {
 		userQuota := 0
 		userUuid := ""
+		chargeRatio := decimal.NewFromInt(1)
 		boundUserUuid, err := model.GetOptionalChuamgweiUserUuid(relayInfo.UserId)
 		if err != nil {
 			return nil, types.NewError(err, types.ErrorCodeQueryDataError, types.ErrOptionWithSkipRetry())
@@ -403,7 +407,7 @@ func NewBillingSession(c *gin.Context, relayInfo *relaycommon.RelayInfo, preCons
 				return nil, types.NewErrorWithStatusCode(fmt.Errorf("new-api 请求ID为空，无法创建积分计费单"), types.ErrorCodeInvalidRequest, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
 			}
 			userUuid = boundUserUuid
-			userQuota, err = GetChuamgweiCreditAvailableQuota(userUuid)
+			userQuota, chargeRatio, err = GetChuamgweiCreditAvailableQuotaWithRatio(userUuid)
 		} else {
 			if boundUserUuid != "" {
 				return nil, newChuamgweiCreditDisabledError(relayInfo.UserId)
@@ -438,11 +442,12 @@ func NewBillingSession(c *gin.Context, relayInfo *relaycommon.RelayInfo, preCons
 		session := &BillingSession{
 			relayInfo: relayInfo,
 			funding: &WalletFunding{
-				userId:     relayInfo.UserId,
-				userUuid:   userUuid,
-				bizOrderNo: relayInfo.RequestId,
-				modelName:  relayInfo.OriginModelName,
-				tokenId:    relayInfo.TokenId,
+				userId:      relayInfo.UserId,
+				userUuid:    userUuid,
+				bizOrderNo:  relayInfo.RequestId,
+				modelName:   relayInfo.OriginModelName,
+				tokenId:     relayInfo.TokenId,
+				chargeRatio: chargeRatio,
 			},
 		}
 		if apiErr := session.preConsume(c, preConsumedQuota); apiErr != nil {
