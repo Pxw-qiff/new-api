@@ -14,7 +14,6 @@ import (
 
 	"github.com/bytedance/gopkg/util/gopool"
 	"github.com/gin-gonic/gin"
-	"github.com/shopspring/decimal"
 )
 
 // ---------------------------------------------------------------------------
@@ -46,7 +45,7 @@ func (s *BillingSession) Settle(actualQuota int) error {
 		return nil
 	}
 	delta := actualQuota - s.preConsumedQuota
-	if delta == 0 && !s.requiresSettleOnZeroDelta() {
+	if delta == 0 {
 		s.settled = true
 		return nil
 	}
@@ -59,7 +58,7 @@ func (s *BillingSession) Settle(actualQuota int) error {
 	}
 	// 2) 调整令牌额度
 	var tokenErr error
-	if delta != 0 && !s.relayInfo.IsPlayground {
+	if !s.relayInfo.IsPlayground {
 		if delta > 0 {
 			tokenErr = model.DecreaseTokenQuota(s.relayInfo.TokenId, s.relayInfo.TokenKey, delta)
 		} else {
@@ -141,13 +140,6 @@ func (s *BillingSession) needsRefundLocked() bool {
 	// 订阅可能在 tokenConsumed=0 时仍预扣了额度
 	if sub, ok := s.funding.(*SubscriptionFunding); ok && sub.preConsumed > 0 {
 		return true
-	}
-	return false
-}
-
-func (s *BillingSession) requiresSettleOnZeroDelta() bool {
-	if funding, ok := s.funding.(interface{ RequiresSettleOnZeroDelta() bool }); ok {
-		return funding.RequiresSettleOnZeroDelta()
 	}
 	return false
 }
@@ -240,9 +232,6 @@ func (s *BillingSession) preConsume(c *gin.Context, quota int) *types.NewAPIErro
 func (s *BillingSession) reserveFunding(delta int) error {
 	switch funding := s.funding.(type) {
 	case *WalletFunding:
-		if funding.UsesExternalCredit() {
-			return types.NewError(fmt.Errorf("外部积分账本暂不支持追加预扣"), types.ErrorCodeUpdateDataError, types.ErrOptionWithSkipRetry())
-		}
 		if err := model.DecreaseUserQuota(funding.userId, delta, false); err != nil {
 			return types.NewError(err, types.ErrorCodeUpdateDataError, types.ErrOptionWithSkipRetry())
 		}
@@ -267,10 +256,6 @@ func (s *BillingSession) reserveFunding(delta int) error {
 func (s *BillingSession) rollbackFundingReserve(delta int) {
 	switch funding := s.funding.(type) {
 	case *WalletFunding:
-		if funding.UsesExternalCredit() {
-			common.SysLog("skip local rollback for external credit reserve")
-			return
-		}
 		if err := model.IncreaseUserQuota(funding.userId, delta, false); err != nil {
 			common.SysLog("error rolling back wallet funding reserve: " + err.Error())
 		} else {
@@ -317,9 +302,6 @@ func (s *BillingSession) shouldTrust(c *gin.Context) bool {
 
 	switch s.funding.Source() {
 	case BillingSourceWallet:
-		if wallet, ok := s.funding.(*WalletFunding); ok && wallet.UsesExternalCredit() {
-			return false
-		}
 		return s.relayInfo.UserQuota > trustQuota
 	case BillingSourceSubscription:
 		// 订阅不能启用信任旁路。原因：
@@ -337,16 +319,6 @@ func (s *BillingSession) syncRelayInfo() {
 	info := s.relayInfo
 	info.FinalPreConsumedQuota = s.preConsumedQuota
 	info.BillingSource = s.funding.Source()
-
-	if wallet, ok := s.funding.(*WalletFunding); ok && wallet.UsesExternalCredit() {
-		info.ChuamgweiUserUuid = wallet.userUuid
-		info.CreditBizOrderNo = wallet.bizOrderNo
-		info.ChuamgweiCreditChargeRatio = normalizeChuamgweiCreditChargeRatio(wallet.chargeRatio).String()
-	} else {
-		info.ChuamgweiUserUuid = ""
-		info.CreditBizOrderNo = ""
-		info.ChuamgweiCreditChargeRatio = ""
-	}
 
 	if sub, ok := s.funding.(*SubscriptionFunding); ok {
 		info.SubscriptionId = sub.subscriptionId
@@ -366,16 +338,6 @@ func (s *BillingSession) syncRelayInfo() {
 // NewBillingSession 工厂 — 根据计费偏好创建会话并处理回退
 // ---------------------------------------------------------------------------
 
-// newChuamgweiCreditDisabledError 阻止影子用户回退到 new-api 本地额度账本。
-func newChuamgweiCreditDisabledError(userId int) *types.NewAPIError {
-	return types.NewErrorWithStatusCode(
-		fmt.Errorf("new-api 用户 %d 已绑定 chuamgwei 用户UUID，但统一积分未启用，拒绝使用 new-api 本地余额校验", userId),
-		types.ErrorCodeUpdateDataError,
-		http.StatusInternalServerError,
-		types.ErrOptionWithSkipRetry(),
-	)
-}
-
 // NewBillingSession 根据用户计费偏好创建 BillingSession，处理 subscription_first / wallet_first 的回退。
 func NewBillingSession(c *gin.Context, relayInfo *relaycommon.RelayInfo, preConsumedQuota int) (*BillingSession, *types.NewAPIError) {
 	if relayInfo == nil {
@@ -386,54 +348,19 @@ func NewBillingSession(c *gin.Context, relayInfo *relaycommon.RelayInfo, preCons
 
 	// 钱包路径需要先检查用户额度
 	tryWallet := func() (*BillingSession, *types.NewAPIError) {
-		userQuota := 0
-		userUuid := ""
-		chargeRatio := decimal.NewFromInt(1)
-		boundUserUuid, err := model.GetOptionalChuamgweiUserUuid(relayInfo.UserId)
-		if err != nil {
-			return nil, types.NewError(err, types.ErrorCodeQueryDataError, types.ErrOptionWithSkipRetry())
-		}
-		if IsChuamgweiCreditEnabled() {
-			if boundUserUuid == "" {
-				return nil, types.NewErrorWithStatusCode(
-					fmt.Errorf("new-api 用户 %d 未绑定 chuamgwei 用户UUID", relayInfo.UserId),
-					types.ErrorCodeInsufficientUserQuota,
-					http.StatusForbidden,
-					types.ErrOptionWithSkipRetry(),
-					types.ErrOptionWithNoRecordErrorLog(),
-				)
-			}
-			if relayInfo.RequestId == "" {
-				return nil, types.NewErrorWithStatusCode(fmt.Errorf("new-api 请求ID为空，无法创建积分计费单"), types.ErrorCodeInvalidRequest, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
-			}
-			userUuid = boundUserUuid
-			userQuota, chargeRatio, err = GetChuamgweiCreditAvailableQuotaWithRatio(userUuid)
-		} else {
-			if boundUserUuid != "" {
-				return nil, newChuamgweiCreditDisabledError(relayInfo.UserId)
-			}
-			userQuota, err = model.GetUserQuota(relayInfo.UserId, false)
-		}
+		userQuota, err := model.GetUserQuota(relayInfo.UserId, false)
 		if err != nil {
 			return nil, types.NewError(err, types.ErrorCodeQueryDataError, types.ErrOptionWithSkipRetry())
 		}
 		if userQuota <= 0 {
-			message := "用户额度不足"
-			if userUuid != "" {
-				message = "统一积分不足"
-			}
 			return nil, types.NewErrorWithStatusCode(
-				fmt.Errorf("%s, 剩余额度: %s", message, logger.FormatQuota(userQuota)),
+				fmt.Errorf("用户额度不足, 剩余额度: %s", logger.FormatQuota(userQuota)),
 				types.ErrorCodeInsufficientUserQuota, http.StatusForbidden,
 				types.ErrOptionWithSkipRetry(), types.ErrOptionWithNoRecordErrorLog())
 		}
 		if userQuota-preConsumedQuota < 0 {
-			message := "预扣费额度失败"
-			if userUuid != "" {
-				message = "统一积分预扣失败"
-			}
 			return nil, types.NewErrorWithStatusCode(
-				fmt.Errorf("%s, 用户剩余额度: %s", message, logger.FormatQuota(userQuota)),
+				fmt.Errorf("预扣费额度失败, 用户剩余额度: %s, 需要预扣费额度: %s", logger.FormatQuota(userQuota), logger.FormatQuota(preConsumedQuota)),
 				types.ErrorCodeInsufficientUserQuota, http.StatusForbidden,
 				types.ErrOptionWithSkipRetry(), types.ErrOptionWithNoRecordErrorLog())
 		}
@@ -441,14 +368,7 @@ func NewBillingSession(c *gin.Context, relayInfo *relaycommon.RelayInfo, preCons
 
 		session := &BillingSession{
 			relayInfo: relayInfo,
-			funding: &WalletFunding{
-				userId:      relayInfo.UserId,
-				userUuid:    userUuid,
-				bizOrderNo:  relayInfo.RequestId,
-				modelName:   relayInfo.OriginModelName,
-				tokenId:     relayInfo.TokenId,
-				chargeRatio: chargeRatio,
-			},
+			funding:   &WalletFunding{userId: relayInfo.UserId},
 		}
 		if apiErr := session.preConsume(c, preConsumedQuota); apiErr != nil {
 			return nil, apiErr

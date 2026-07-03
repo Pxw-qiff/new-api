@@ -722,9 +722,6 @@ func calcSubscriptionBalanceQuota(priceAmount float64) (int, error) {
 
 // PurchaseSubscriptionWithBalance creates a subscription by deducting the user's wallet quota.
 func PurchaseSubscriptionWithBalance(userId int, planId int) error {
-	if common.IsChuamgweiCreditEnabled() {
-		return errors.New("已接入统一积分账本，余额购买订阅已禁用")
-	}
 	if userId <= 0 || planId <= 0 {
 		return errors.New("invalid userId or planId")
 	}

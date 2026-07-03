@@ -335,6 +335,7 @@ export function getChannelIcon(channelType) {
     case 1: // OpenAI
     case 3: // Azure OpenAI
     case 57: // Codex
+    case 59: // Global Gateway
       return <OpenAI size={iconSize} />;
     case 2: // MjProxy
     case 5: // MjProxyPlus

@@ -143,10 +143,6 @@ type RelayInfo struct {
 	SubscriptionPlanTitle string
 	// RequestId is used for idempotent pre-consume/refund
 	RequestId string
-	// ChuamgweiUserUuid / CreditBizOrderNo are used to finish external credit billing for async tasks.
-	ChuamgweiUserUuid          string
-	CreditBizOrderNo           string
-	ChuamgweiCreditChargeRatio string
 	// SubscriptionAmountTotal / SubscriptionAmountUsedAfterPreConsume are used to compute remaining in logs.
 	SubscriptionAmountTotal               int64
 	SubscriptionAmountUsedAfterPreConsume int64

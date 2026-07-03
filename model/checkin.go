@@ -57,9 +57,6 @@ func UserCheckin(userId int) (*Checkin, error) {
 	if !setting.Enabled {
 		return nil, errors.New("签到功能未启用")
 	}
-	if common.IsChuamgweiCreditEnabled() {
-		return nil, errors.New("已接入统一积分账本，签到赠送已禁用")
-	}
 
 	// 检查今天是否已签到
 	hasChecked, err := HasCheckedInToday(userId)

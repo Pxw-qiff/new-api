@@ -31,8 +31,6 @@ type Token struct {
 	DeletedAt          gorm.DeletedAt `gorm:"index"`
 }
 
-const ChuamgweiDefaultTokenName = "chuamgwei-default"
-
 func (token *Token) Clean() {
 	token.Key = ""
 }
@@ -289,45 +287,6 @@ func (token *Token) Insert() error {
 	var err error
 	err = DB.Create(token).Error
 	return err
-}
-
-// EnsureChuamgweiDefaultToken 确保影子用户存在一个默认 API Key。
-func EnsureChuamgweiDefaultToken(userId int, group string, remainQuota int, unlimitedQuota bool) (*Token, bool, error) {
-	if userId == 0 {
-		return nil, false, errors.New("userId 为空！")
-	}
-	var token Token
-	err := DB.Where("user_id = ? AND name = ?", userId, ChuamgweiDefaultTokenName).First(&token).Error
-	if err == nil {
-		return &token, false, nil
-	}
-	if !errors.Is(err, gorm.ErrRecordNotFound) {
-		return nil, false, err
-	}
-	key, err := common.GenerateKey()
-	if err != nil {
-		return nil, false, err
-	}
-	if strings.TrimSpace(group) == "" {
-		group = "default"
-	}
-	now := common.GetTimestamp()
-	token = Token{
-		UserId:         userId,
-		Name:           ChuamgweiDefaultTokenName,
-		Key:            key,
-		Status:         common.TokenStatusEnabled,
-		CreatedTime:    now,
-		AccessedTime:   now,
-		ExpiredTime:    -1,
-		RemainQuota:    remainQuota,
-		UnlimitedQuota: unlimitedQuota,
-		Group:          group,
-	}
-	if err := token.Insert(); err != nil {
-		return nil, false, err
-	}
-	return &token, true, nil
 }
 
 // Update Make sure your token's fields is completed, because this will update non-zero values

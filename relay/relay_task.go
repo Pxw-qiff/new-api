@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"regexp"
 	"strconv"
 	"strings"
 
@@ -195,9 +194,7 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 	}
 
 	// 6. 将 OtherRatios 应用到基础额度
-	// 强制所有异步任务使用本地 ModelPrice 按次计费，跳过上游倍率计算
-	// 原逻辑: if !common.StringsContains(constant.TaskPricePatches, modelName)
-	if false {
+	if !common.StringsContains(constant.TaskPricePatches, modelName) {
 		for _, ra := range info.PriceData.OtherRatios {
 			if ra != 1.0 {
 				info.PriceData.Quota = int(float64(info.PriceData.Quota) * ra)
@@ -226,7 +223,7 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 	}
 	if resp != nil && resp.StatusCode != http.StatusOK {
 		responseBody, _ := io.ReadAll(resp.Body)
-		return nil, service.TaskErrorWrapper(fmt.Errorf("%s", sanitizeUpstreamTaskError(string(responseBody))), "fail_to_fetch_task", resp.StatusCode)
+		return nil, service.TaskErrorWrapper(fmt.Errorf("%s", string(responseBody)), "fail_to_fetch_task", resp.StatusCode)
 	}
 
 	// 10. 返回 OtherRatios 给下游（header 必须在 DoResponse 写 body 之前设置）
@@ -564,22 +561,4 @@ func TaskModel2Dto(task *model.Task) *dto.TaskDto {
 		Username:   task.Username,
 		Data:       task.Data,
 	}
-}
-
-// sanitizeUpstreamTaskError 清理上游任务错误响应，移除预扣费金额等内部定价信息。
-func sanitizeUpstreamTaskError(body string) string {
-	var resp struct {
-		Code    string `json:"code"`
-		Message string `json:"message"`
-		Data    any    `json:"data"`
-	}
-	if common.Unmarshal([]byte(body), &resp) != nil {
-		return body
-	}
-	resp.Message = regexp.MustCompile(`,\s*需要预扣费额度[^,]*`).ReplaceAllString(resp.Message, "")
-	cleaned, err := common.Marshal(resp)
-	if err != nil {
-		return body
-	}
-	return string(cleaned)
 }

@@ -3,7 +3,6 @@ package controller
 import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
-	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/QuantumNous/new-api/types"
 	"github.com/gin-gonic/gin"
@@ -23,19 +22,8 @@ func GetSubscription(c *gin.Context) {
 		usedQuota = token.UsedQuota
 	} else {
 		userId := c.GetInt("id")
-		if service.IsChuamgweiCreditEnabled() {
-			userUuid, uuidErr := model.GetChuamgweiUserUuid(userId)
-			if uuidErr != nil {
-				err = uuidErr
-			} else {
-				remainQuota, err = service.GetChuamgweiCreditAvailableQuota(userUuid)
-			}
-		} else {
-			remainQuota, err = model.GetUserQuota(userId, false)
-		}
-		if err == nil {
-			usedQuota, err = model.GetUserUsedQuota(userId)
-		}
+		remainQuota, err = model.GetUserQuota(userId, false)
+		usedQuota, err = model.GetUserUsedQuota(userId)
 	}
 	if expiredTime <= 0 {
 		expiredTime = 0

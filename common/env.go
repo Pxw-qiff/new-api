@@ -36,23 +36,3 @@ func GetEnvOrDefaultBool(env string, defaultValue bool) bool {
 	}
 	return b
 }
-
-func IsChuamgweiCreditEnabled() bool {
-	return GetEnvOrDefaultBool("CHUAMGWEI_CREDIT_ENABLED", false)
-}
-
-func GetChuamgweiUserSyncSecret() string {
-	return GetEnvOrDefaultString("CHUAMGWEI_USER_SYNC_SECRET", "")
-}
-
-func GetChuamgweiDefaultTokenGroup() string {
-	return GetEnvOrDefaultString("CHUAMGWEI_DEFAULT_TOKEN_GROUP", "default")
-}
-
-func GetChuamgweiDefaultTokenRemainQuota() int {
-	return GetEnvOrDefault("CHUAMGWEI_DEFAULT_TOKEN_REMAIN_QUOTA", 0)
-}
-
-func IsChuamgweiDefaultTokenUnlimited() bool {
-	return GetEnvOrDefaultBool("CHUAMGWEI_DEFAULT_TOKEN_UNLIMITED", true)
-}
