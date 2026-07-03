@@ -149,14 +149,15 @@ func updateVideoSingleTask(ctx context.Context, adaptor channel.TaskAdaptor, cha
 			task.FailReason = taskResult.Url
 		}
 
+		// 【修改说明 - 2026-07-03】
+		// 修改背景：任务结算服务已改为内部处理错误并记录日志，调用侧继续按返回 error 处理会导致 Go 编译失败。
+		// 解决问题：改为直接触发结算动作，避免把无返回值函数当成有返回值函数使用。
+		// 设计考虑：保持结算职责集中在 service 层，controller 只负责根据任务状态触发结算，避免服务接口扩散影响其他轮询链路。
+		// 注意事项：后续如需向调用侧暴露结算失败，应统一调整 service 层签名和所有调用点，不能只改当前视频任务链路。
 		if taskResult.TotalTokens > 0 {
-			if err := service.RecalculateTaskQuotaByTokens(ctx, task, taskResult.TotalTokens); err != nil {
-				logger.LogWarn(ctx, fmt.Sprintf("视频任务 %s 结算失败: %s", task.TaskID, err.Error()))
-			}
+			service.RecalculateTaskQuotaByTokens(ctx, task, taskResult.TotalTokens)
 		} else {
-			if err := service.RecalculateTaskQuota(ctx, task, task.Quota, "视频任务完成按预扣额度结算"); err != nil {
-				logger.LogWarn(ctx, fmt.Sprintf("视频任务 %s 结算失败: %s", task.TaskID, err.Error()))
-			}
+			service.RecalculateTaskQuota(ctx, task, task.Quota, "视频任务完成按预扣额度结算")
 		}
 	case model.TaskStatusFailure:
 		logger.LogJson(ctx, fmt.Sprintf("Task %s failed", taskId), task)
@@ -187,9 +188,7 @@ func updateVideoSingleTask(ctx context.Context, adaptor channel.TaskAdaptor, cha
 	}
 
 	if shouldRefund {
-		if err := service.RefundTaskQuota(ctx, task, "Video async task failed"); err != nil {
-			logger.LogWarn(ctx, fmt.Sprintf("视频任务 %s 退款失败: %s", task.TaskID, err.Error()))
-		}
+		service.RefundTaskQuota(ctx, task, "Video async task failed")
 	}
 
 	return nil
