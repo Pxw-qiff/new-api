@@ -15,7 +15,6 @@ import (
 	"github.com/QuantumNous/new-api/relay"
 	"github.com/QuantumNous/new-api/relay/channel"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
-	"github.com/QuantumNous/new-api/service"
 )
 
 func UpdateVideoTaskAll(ctx context.Context, platform constant.TaskPlatform, taskChannelM map[int][]string, taskM map[string]*model.Task) error {
@@ -124,11 +123,11 @@ func updateVideoSingleTask(ctx context.Context, adaptor channel.TaskAdaptor, cha
 		taskResult = relaycommon.FailTaskInfo("upstream returned empty status")
 	}
 
-	// 记录原本的状态，防止重复退款
-	shouldRefund := false
-	quota := task.Quota
-	preStatus := task.Status
-
+	// 【修改说明 - 2026-07-03】
+	// 修改背景：当前视频任务轮询只需要同步上游状态和结果，用户明确不需要积分/额度结算逻辑。
+	// 解决问题：移除完成重算和失败退款的控制变量，避免任务状态更新链路继续触发积分变更。
+	// 设计考虑：积分职责不放在轮询控制器里，降低供应商接入对计费模块的影响。
+	// 注意事项：后续如需恢复积分结算，应单独设计计费链路，不能在状态轮询中隐式执行。
 	task.Status = model.TaskStatus(taskResult.Status)
 	switch taskResult.Status {
 	case model.TaskStatusSubmitted:
@@ -149,16 +148,6 @@ func updateVideoSingleTask(ctx context.Context, adaptor channel.TaskAdaptor, cha
 			task.FailReason = taskResult.Url
 		}
 
-		// 【修改说明 - 2026-07-03】
-		// 修改背景：任务结算服务已改为内部处理错误并记录日志，调用侧继续按返回 error 处理会导致 Go 编译失败。
-		// 解决问题：改为直接触发结算动作，避免把无返回值函数当成有返回值函数使用。
-		// 设计考虑：保持结算职责集中在 service 层，controller 只负责根据任务状态触发结算，避免服务接口扩散影响其他轮询链路。
-		// 注意事项：后续如需向调用侧暴露结算失败，应统一调整 service 层签名和所有调用点，不能只改当前视频任务链路。
-		if taskResult.TotalTokens > 0 {
-			service.RecalculateTaskQuotaByTokens(ctx, task, taskResult.TotalTokens)
-		} else {
-			service.RecalculateTaskQuota(ctx, task, task.Quota, "视频任务完成按预扣额度结算")
-		}
 	case model.TaskStatusFailure:
 		logger.LogJson(ctx, fmt.Sprintf("Task %s failed", taskId), task)
 		task.Status = model.TaskStatusFailure
@@ -169,13 +158,6 @@ func updateVideoSingleTask(ctx context.Context, adaptor channel.TaskAdaptor, cha
 		task.FailReason = taskResult.Reason
 		logger.LogInfo(ctx, fmt.Sprintf("Task %s failed: %s", task.TaskID, task.FailReason))
 		taskResult.Progress = "100%"
-		if quota != 0 {
-			if preStatus != model.TaskStatusFailure {
-				shouldRefund = true
-			} else {
-				logger.LogWarn(ctx, fmt.Sprintf("Task %s already in failure status, skip refund", task.TaskID))
-			}
-		}
 	default:
 		return fmt.Errorf("unknown task status %s for task %s", taskResult.Status, taskId)
 	}
@@ -184,11 +166,6 @@ func updateVideoSingleTask(ctx context.Context, adaptor channel.TaskAdaptor, cha
 	}
 	if err := task.Update(); err != nil {
 		common.SysLog("UpdateVideoTask task error: " + err.Error())
-		shouldRefund = false
-	}
-
-	if shouldRefund {
-		service.RefundTaskQuota(ctx, task, "Video async task failed")
 	}
 
 	return nil

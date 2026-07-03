@@ -54,24 +54,6 @@ func GetEnabledModels() []string {
 	return models
 }
 
-// ModelChannelCount 表示一个模型当前绑定的启用渠道数量。
-type ModelChannelCount struct {
-	Model        string `json:"model"`
-	ChannelCount int64  `json:"channel_count"`
-}
-
-// GetEnabledModelChannelCounts 统计每个启用模型可用的去重渠道数。
-func GetEnabledModelChannelCounts() ([]ModelChannelCount, error) {
-	var stats []ModelChannelCount
-	err := DB.Table("abilities").
-		Select("abilities.model as model, COUNT(DISTINCT abilities.channel_id) as channel_count").
-		Joins("JOIN channels ON channels.id = abilities.channel_id").
-		Where("abilities.enabled = ? AND channels.status = ? AND abilities.model <> ?", true, common.ChannelStatusEnabled, "").
-		Group("abilities.model").
-		Scan(&stats).Error
-	return stats, err
-}
-
 func GetAllEnableAbilities() []Ability {
 	var abilities []Ability
 	DB.Find(&abilities, "enabled = ?", true)
