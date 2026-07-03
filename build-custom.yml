@@ -24,12 +24,17 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      # 修改说明：GHCR 镜像仓库名必须全小写，先规范化 owner，避免 Docker 拉取时报 invalid reference format。
+      - name: Normalize GHCR image owner
+        shell: bash
+        run: echo "IMAGE_OWNER=${GITHUB_REPOSITORY_OWNER,,}" >> "$GITHUB_ENV"
+
       - name: Build & push
         uses: docker/build-push-action@v6
         with:
           context: .
           platforms: linux/amd64
           push: true
-          tags: ghcr.io/${{ github.repository_owner }}/new-api:custom
+          tags: ghcr.io/${{ env.IMAGE_OWNER }}/new-api:custom
           cache-from: type=gha
           cache-to: type=gha,mode=max

@@ -16,8 +16,8 @@ version: '3.4' # For compatibility with older Docker versions
 
 services:
   new-api:
-    image: calciumion/new-api:latest
-    container_name: new-api
+    image: ghcr.io/pxw-qiff/new-api:custom
+    container_name: newapi-app
     restart: always
     command: --log-dir /app/logs
     ports:
@@ -61,7 +61,7 @@ services:
 
   redis:
     image: redis:latest
-    container_name: redis
+    container_name: newapi-redis
     restart: always
     command: ["redis-server", "--requirepass", "123456"]  # ⚠️ IMPORTANT: Change this password in production!
     networks:
@@ -69,7 +69,7 @@ services:
 
   postgres:
     image: postgres:15
-    container_name: postgres
+    container_name: newapi-postgres
     restart: always
     environment:
       POSTGRES_USER: root

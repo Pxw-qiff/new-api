@@ -22,7 +22,12 @@ var TopUpLink = ""
 var themeValue atomic.Value // stores string; safe for concurrent read/write
 
 func init() {
-	themeValue.Store("classic")
+	// 【修改说明 - 2026-07-03】
+	// 修改背景：部署后需要默认进入新版前端，避免首次访问仍落到经典前端。
+	// 解决问题：将内存主题默认值改为 default，使配置加载前的页面回退也走新版 UI。
+	// 设计考虑：主题配置仍可通过系统设置覆盖，保留后台切换 classic 的能力。
+	// 注意事项：如需恢复经典前端，需要同步调整 system_setting/theme.go 的默认配置。
+	themeValue.Store("default")
 }
 
 func GetTheme() string {
