@@ -194,7 +194,10 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 	}
 
 	// 6. 将 OtherRatios 应用到基础额度
-	if !common.StringsContains(constant.TaskPricePatches, modelName) {
+	// 【修改说明】设置了固定价格(UsePrice)的模型按次计费，不应乘 seconds/size 倍率。
+	// 原代码只检查 TaskPricePatches 环境变量，漏检 UsePrice，导致固定价格被时长倍率错误放大。
+	// 修复后：UsePrice=true 或模型在 TaskPricePatches 中 -> 按次计费，跳过倍率；否则按时长计费。
+	if !info.PriceData.UsePrice && !common.StringsContains(constant.TaskPricePatches, modelName) {
 		for _, ra := range info.PriceData.OtherRatios {
 			if ra != 1.0 {
 				info.PriceData.Quota = int(float64(info.PriceData.Quota) * ra)
