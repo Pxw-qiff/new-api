@@ -90,6 +90,14 @@ export function buildModelRatioColumns({
               className='shrink-0'
             />
           )}
+          {row.original.billingMode === 'per-second' && (
+            <StatusBadge
+              label={t('Per-second')}
+              variant='danger'
+              copyable={false}
+              className='shrink-0'
+            />
+          )}
           {row.original.hasConflict && (
             <StatusBadge
               label={t('Conflict')}

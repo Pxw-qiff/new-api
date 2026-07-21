@@ -137,6 +137,17 @@ const buildModelState = (name, sourceMaps) => {
       hasConflict: false,
     };
   }
+  if (billingMode === 'per_second') {
+    const fixedPrice = toNumericString(sourceMaps.ModelPrice[name]);
+    return {
+      ...EMPTY_MODEL,
+      name,
+      billingMode: 'per-second',
+      fixedPrice,
+      rawRatios: { ...EMPTY_MODEL.rawRatios },
+      hasConflict: false,
+    };
+  }
 
   const modelRatio = toNumericString(sourceMaps.ModelRatio[name]);
   const completionRatio = toNumericString(sourceMaps.CompletionRatio[name]);
@@ -307,6 +318,10 @@ export const buildSummaryText = (model, t) => {
     return `${t('按次')} $${model.fixedPrice} / ${t('次')}${requestRuleSuffix}`;
   }
 
+  if (model.billingMode === 'per-second' && hasValue(model.fixedPrice)) {
+    return `${t('按秒')} $${model.fixedPrice} / ${t('秒')}${requestRuleSuffix}`;
+  }
+
   if (hasValue(model.inputPrice)) {
     const extraCount = [
       model.completionPrice,
@@ -346,7 +361,7 @@ const serializeModel = (model, t) => {
     AudioCompletionRatio: null,
   };
 
-  if (model.billingMode === 'per-request') {
+  if (model.billingMode === 'per-request' || model.billingMode === 'per-second') {
     if (hasValue(model.fixedPrice)) {
       result.ModelPrice = toNormalizedNumber(model.fixedPrice);
     }
@@ -493,6 +508,19 @@ export const buildPreviewRows = (model, t) => {
         key: 'ModelPrice',
         label: 'ModelPrice',
         value: hasValue(model.fixedPrice) ? model.fixedPrice : t('空'),
+      },
+    ];
+    return rows;
+  }
+
+  if (model.billingMode === 'per-second') {
+    const rows = [
+      {
+        key: 'ModelPrice',
+        label: 'ModelPrice',
+        value: hasValue(model.fixedPrice)
+          ? `$${model.fixedPrice} / ${t('秒')}`
+          : t('空'),
       },
     ];
     return rows;
@@ -1049,6 +1077,9 @@ export function useModelPricingEditorState({
             tieredOutput['billing_setting.billing_mode'][model.name] = 'tiered_expr';
             tieredOutput['billing_setting.billing_expr'][model.name] = finalBillingExpr;
           }
+        }
+        if (model.billingMode === 'per-second') {
+          tieredOutput['billing_setting.billing_mode'][model.name] = 'per_second';
         }
 
         // Always serialize ratio/price values for all models (including

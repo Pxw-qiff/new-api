@@ -167,6 +167,37 @@ func ModelPriceHelper(c *gin.Context, info *relaycommon.RelayInfo, promptTokens 
 func ModelPriceHelperPerCall(c *gin.Context, info *relaycommon.RelayInfo) (types.PriceData, error) {
 	groupRatioInfo := HandleGroupRatio(c, info)
 
+	// 【修改说明】新增按秒计费模式：modelPrice 表示每秒价格（$/秒），
+	// UsePrice 设为 false 以便 relay_task.go 中的 OtherRatios（seconds 倍率）能正常生效。
+	// baseQuota = modelPrice × QuotaPerUnit × groupRatio（1秒的基础额度），
+	// 最终 quota = baseQuota × seconds（由适配器的 EstimateBilling 提供）。
+	if billing_setting.GetBillingMode(info.OriginModelName) == billing_setting.BillingModePerSecond {
+		modelPrice, success := ratio_setting.GetModelPrice(info.OriginModelName, true)
+		if !success {
+			return types.PriceData{}, modelPriceNotConfiguredError(info.OriginModelName, info.UserId)
+		}
+
+		var quota int
+		freeModel := false
+		quota = int(modelPrice * common.QuotaPerUnit * groupRatioInfo.GroupRatio)
+		if !operation_setting.GetQuotaSetting().EnableFreeModelPreConsume {
+			if groupRatioInfo.GroupRatio == 0 || modelPrice == 0 {
+				quota = 0
+				freeModel = true
+			}
+		}
+
+		priceData := types.PriceData{
+			FreeModel:      freeModel,
+			ModelPrice:     modelPrice,
+			ModelRatio:     0,
+			UsePrice:       false,
+			Quota:          quota,
+			GroupRatioInfo: groupRatioInfo,
+		}
+		return priceData, nil
+	}
+
 	modelPrice, success := ratio_setting.GetModelPrice(info.OriginModelName, true)
 	usePrice := success
 	var modelRatio float64

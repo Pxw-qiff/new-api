@@ -246,6 +246,22 @@ func (a *TaskAdaptor) GetModelList() []string {
 	return ModelList
 }
 
+// EstimateBilling 从请求中提取视频时长（秒），作为 OtherRatios 返回。
+// 【修改说明】新增按秒计费支持：当模型配置为 per_second 计费模式时，
+// relay_task.go 会将此 seconds 倍率乘到基础额度上，实现按秒计费。
+// seconds 来源优先级：req.Duration > req.Seconds > 默认值 4。
+func (a *TaskAdaptor) EstimateBilling(c *gin.Context, info *relaycommon.RelayInfo) map[string]float64 {
+	req, err := relaycommon.GetTaskRequest(c)
+	if err != nil {
+		return nil
+	}
+	seconds := resolveDuration(req)
+	if seconds <= 0 {
+		seconds = 4
+	}
+	return map[string]float64{"seconds": float64(seconds)}
+}
+
 // GetChannelName 返回渠道名称，用于模型列表和后台展示。
 func (a *TaskAdaptor) GetChannelName() string {
 	return ChannelName

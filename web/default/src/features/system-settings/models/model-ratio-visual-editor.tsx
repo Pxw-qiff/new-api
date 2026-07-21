@@ -258,7 +258,8 @@ const ModelRatioVisualEditorComponent = forwardRef<
         (acc, model) => {
           const mode =
             model.billingMode === 'per-request' ||
-            model.billingMode === 'tiered_expr'
+            model.billingMode === 'tiered_expr' ||
+            model.billingMode === 'per-second'
               ? model.billingMode
               : 'per-token'
           acc[mode] += 1
@@ -267,8 +268,12 @@ const ModelRatioVisualEditorComponent = forwardRef<
         {
           'per-token': 0,
           'per-request': 0,
+          'per-second': 0,
           tiered_expr: 0,
-        } as Record<'per-token' | 'per-request' | 'tiered_expr', number>
+        } as Record<
+          'per-token' | 'per-request' | 'per-second' | 'tiered_expr',
+          number
+        >
       ),
     [models]
   )
@@ -289,9 +294,11 @@ const ModelRatioVisualEditorComponent = forwardRef<
         billingMode:
           editableModel.billingMode === 'tiered_expr'
             ? 'tiered_expr'
-            : editableModel.price && editableModel.price !== ''
-              ? 'per-request'
-              : 'per-token',
+            : editableModel.billingMode === 'per-second'
+              ? 'per-second'
+              : editableModel.price && editableModel.price !== ''
+                ? 'per-request'
+                : 'per-token',
         billingExpr: editableModel.billingExpr,
         requestRuleExpr: editableModel.requestRuleExpr,
       })
@@ -537,6 +544,11 @@ const ModelRatioVisualEditorComponent = forwardRef<
           setIfPresent(imageMap, name, data.imageRatio)
           setIfPresent(audioMap, name, data.audioRatio)
           setIfPresent(audioCompletionMap, name, data.audioCompletionRatio)
+        } else if (data.billingMode === 'per-second') {
+          // per-second 模式：每秒价格存入 priceMap，billingModeMap 标记为 per_second
+          // 后端 ModelPriceHelperPerCall 检测到 per_second 后走按秒计费路径
+          setIfPresent(priceMap, name, data.price)
+          billingModeMap[name] = 'per_second'
         } else if (data.price && data.price !== '') {
           setIfPresent(priceMap, name, data.price)
         } else {
@@ -648,6 +660,11 @@ const ModelRatioVisualEditorComponent = forwardRef<
                     label: 'Per-request',
                     value: 'per-request',
                     count: modeCounts['per-request'],
+                  },
+                  {
+                    label: 'Per-second',
+                    value: 'per-second',
+                    count: modeCounts['per-second'],
                   },
                   {
                     label: 'Expression',
