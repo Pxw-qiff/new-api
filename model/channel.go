@@ -198,8 +198,9 @@ func (channel *Channel) GetKeys() []string {
 
 func (channel *Channel) GetNextEnabledKey() (string, int, *types.NewAPIError) {
 	// If not in multi-key mode, return the original key string directly.
+	// TrimSpace 防止复制粘贴时带入的换行符、空格等不可见字符导致 HTTP header 非法
 	if !channel.ChannelInfo.IsMultiKey {
-		return channel.Key, 0, nil
+		return strings.TrimSpace(channel.Key), 0, nil
 	}
 
 	// Obtain all keys (split by \n)
